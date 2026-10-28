@@ -91,6 +91,10 @@ include timeouts and component-level status (skill: operate-and-scale).
 - 0006 Editorial-paper design system over dark glass/vinyl — approved
   by the user 2026-10-28; words are the hero because the product is
   words only.
+- 0007 Layer 3 database (migrations, RLS, counts/triggers) — applied
+  live 2026-10-29.
+- 0008 Layer 4 auth (Supabase Auth, TOTP MFA only, no SMS) — written
+  in code, providers not yet enabled live.
 
 ## What this repo is NOT
 
@@ -100,18 +104,26 @@ include timeouts and component-level status (skill: operate-and-scale).
 - It is NOT the old checklist folder (`~/workspace/opineo/`), which
   still says Opineo / Liquid Glass. That folder is untouched by this
   scaffold and is superseded by this repo's docs for name and look.
-- No auth, database migrations, or feature endpoints exist yet in this
-  step. Those are the next layers, after this report.
+- Auth and database migrations exist now (Layers 3–4, see
+  `docs/decisions/0007-layer3-database.md` and
+  `docs/decisions/0008-layer4-auth.md`); feature endpoints are the
+  next layers (Layer 5+).
 
 ## Open questions (user to confirm)
 
 - Supabase project: CREATED by the user 2026-10-29 — name `opiinio`,
   URL https://moahibzipoyyheaceonp.supabase.co, Status Healthy,
-  dashboard showed "No migrations" at creation. Anon key still
+  region eu-west-1 (West EU, Ireland). Anon key still
   pending (placeholders only in `.env.example`); never record the
   service_role key or database password here. Layer 3 migrations
-  are written (`supabase/migrations/`, see `MIGRATION-GUIDE.md`)
-  but NOT yet applied live by the user.
+  are APPLIED LIVE 2026-10-29 (4 migrations, each Success in the
+  SQL Editor; verification passed: 18 tables, RLS true for all 18,
+  policies >= 1 for all 18, opinions_body_check 1–280; see
+  `MIGRATION-GUIDE.md`). Note: the dashboard "Last migration"
+  label still reads "No migrations" — it only tracks CLI/GitHub
+  integration, not SQL-Editor applies, and is not the proof.
+  Layer 4 (auth) is written in code but providers are NOT yet
+  enabled live; see `AUTH-SETUP-GUIDE.md`.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.

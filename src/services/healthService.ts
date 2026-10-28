@@ -11,22 +11,28 @@
 
 import type { EnvConfig } from "../lib/env.js";
 
-export type DatabaseHealthStatus = "not_configured" | "not_checked";
+export type ComponentHealthStatus = "not_configured" | "not_checked";
 
-export interface DatabaseHealth {
+export interface ComponentHealth {
   /**
-   * Layer 3 honesty rule: this is NEVER "ok" in this layer.
+   * Honesty rule (Layers 3–4): this is NEVER "ok" in these layers.
    * - "not_configured": SUPABASE_URL or SUPABASE_ANON_KEY is missing.
    * - "not_checked": both are present, but no live probe exists yet
-   *   (no Supabase client dependency is wired in Layer 3, by design).
-   * A real probe with a timeout belongs to the layer that wires the
-   * client; claiming "ok" here without one would be a fake check.
+   *   (auth verification exists in lib/auth.ts, but no route calls
+   *   it against a live GoTrue in this layer, by design).
+   * A real probe with a timeout belongs to the layer that wires a
+   * live check; claiming "ok" here without one would be a fake check.
    */
-  status: DatabaseHealthStatus;
+  status: ComponentHealthStatus;
   configured: boolean;
   /** Planned probe timeout in ms for the future live check. Not used yet. */
   timeoutMs: number;
 }
+
+/** Backwards-compatible alias for the Layer 3 name. */
+export type DatabaseHealthStatus = ComponentHealthStatus;
+export type DatabaseHealth = ComponentHealth;
+export type AuthHealth = ComponentHealth;
 
 export interface HealthCheck {
   status: "ok";
@@ -34,7 +40,7 @@ export interface HealthCheck {
   scope: "app";
   /** Names of optional env vars present (never values). */
   envPresent: string[];
-  checks: { database: DatabaseHealth };
+  checks: { database: ComponentHealth; auth: ComponentHealth };
   uptimeSeconds: number;
   timestamp: string;
 }
@@ -43,16 +49,18 @@ export function buildHealth(env: EnvConfig): HealthCheck {
   const configured =
     env.presentOptional.includes("SUPABASE_URL") &&
     env.presentOptional.includes("SUPABASE_ANON_KEY");
+  const component: ComponentHealth = {
+    status: configured ? "not_checked" : "not_configured",
+    configured,
+    timeoutMs: 3000,
+  };
   return {
     status: "ok",
     scope: "app",
     envPresent: env.presentOptional,
     checks: {
-      database: {
-        status: configured ? "not_checked" : "not_configured",
-        configured,
-        timeoutMs: 3000,
-      },
+      database: { ...component },
+      auth: { ...component },
     },
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
