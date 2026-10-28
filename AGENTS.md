@@ -1,0 +1,119 @@
+# Opiinio — Project Memory
+
+> This file is the project memory for the REAL Opiinio product. It is
+> written first, before feature code, per the real_saas_playbook skill
+> (Part 0). A decision not recorded here counts as a decision not made.
+> Update this file every time a decision is made.
+
+## Product (2 sentences)
+
+Opiinio (O-P-I-I-N-I-O, tagline: EVERY OPINION MATTERS) is a text-only
+opinion platform: people write short opinions, reply, vote
+Agree / Neutral / Disagree, repost, debate, and follow topics and people —
+with no photo, video, or media upload anywhere. It is built to launch at
+₹0 on free tiers and to earn later from ads and sponsored debates, not
+from paywalling the core.
+
+## Stack (locked for V1 unless a decision record changes it)
+
+- Language / runtime: Node.js 24, TypeScript, strict mode.
+- App shape: modular monolith — one deployable app, business logic in
+  `src/services/`, thin route handlers in `src/routes/`, never business
+  logic in UI components or route handlers.
+- Frontend: static editorial-paper pages served by the same app for V1
+  (warm cream background, black ink serif headlines, speech-bubble cards
+  in teal/coral, balance-scale / tug-of-war Agree–Disagree meter).
+  Hosting: Netlify free at launch.
+- Backend / database / auth: Supabase free (Postgres + Supabase Auth).
+  No hand-rolled password hashing or session logic. Google + email auth
+  only. No SMS OTP (billed).
+- Package tooling: npm, ESLint (flat config), Prettier, `node:test`.
+- No other dependencies in V1. Ask before adding a dependency and record
+  the reason in `docs/decisions/`.
+
+## Hard rules (do not break without a recorded user decision)
+
+1. Text-only, 280 characters per opinion. No photo/video/media upload
+   anywhere. Avatars are initials only at launch; profile photos are NOT
+   allowed yet (they would need storage, moderation, and a cost decision).
+2. Follow model: public instant follow, like Twitter. NOT follow-request
+   approval.
+3. Tenancy: personal accounts. Scope every query by `user_id`, never by
+   organisation. Team-invite features are OUT OF SCOPE for V1 (see
+   `docs/decisions/0005-no-team-invites-v1.md`).
+4. ₹0 launch: no paid API, no SMS OTP, no paid dependency. Free tiers
+   only (Netlify free, Supabase free). Billing alerts before any upgrade.
+5. Look: light editorial paper only. Do NOT use the Waxline dark
+   vinyl-press look or the dark Liquid Glass look.
+6. Money, when premium arrives later: integer minor units (paise), never
+   floats. Not in V1 scope.
+7. Secrets: never in code, never in git history. `.env.example` holds
+   names only, with every variable documented. The app must refuse to
+   start with a clear message if a required variable is missing (to be
+   enforced when the first real env var is wired; see Open Questions).
+8. Working loop (every layer): plan → review plan → implement in small
+   steps → verify with lint + typecheck + tests → review diff → record
+   decision. Never edit a test to make it pass. Never call work complete
+   with a failing or skipped test.
+
+## Commands
+
+```sh
+npm install        # install dev dependencies (typescript, eslint, prettier)
+npm run dev        # start the dev server (default http://localhost:3000)
+npm start          # start the production-mode server (same entry point)
+npm run lint       # eslint over src/ and tests/
+npm run typecheck  # tsc --noEmit (strict)
+npm test           # node:test suite (health endpoint + env validation)
+npm run format     # prettier --write over the repo (excluding node_modules, dist)
+```
+
+Health check: `GET /api/health` → `200 {"status":"ok","checks":{...}}`.
+The scaffold health check reports the app itself only; database/cache
+checks are added in the next layer, when Supabase is wired, and must
+include timeouts and component-level status (skill: operate-and-scale).
+
+## Architecture decisions (summary; full records in docs/decisions/)
+
+- 0001 Modular monolith, not microservices — solo build, cheaper, easier
+  to debug; split later only with a recorded reason.
+- 0002 Supabase (Postgres + Auth) over Firebase — SQL migrations,
+  row-level security, and a single Postgres schema fit the playbook's
+  migration/index/user-scoped-query discipline; Firebase was the
+  rejected alternative (see record).
+- 0003 Netlify free for frontend hosting over a VPS — ₹0, HTTPS, and
+  deploy previews; VPS rejected for V1 (ops cost).
+- 0004 No media storage in V1 — text-only by product rule, so the
+  upload/pre-signed-URL layer of the skill is deferred, not silently
+  skipped.
+- 0005 No team invites in V1 — personal accounts only; team features
+  from the skill are recorded out of scope, not omitted by accident.
+- 0006 Editorial-paper design system over dark glass/vinyl — approved
+  by the user 2026-10-28; words are the hero because the product is
+  words only.
+
+## What this repo is NOT
+
+- It is NOT the demo prototype artifact (`opinion-app-prototype`):
+  that prototype keeps in-memory state, resets on reload, and is not
+  shared between real users. This repo is the real product scaffold.
+- It is NOT the old checklist folder (`~/workspace/opineo/`), which
+  still says Opineo / Liquid Glass. That folder is untouched by this
+  scaffold and is superseded by this repo's docs for name and look.
+- No auth, database migrations, or feature endpoints exist yet in this
+  step. Those are the next layers, after this report.
+
+## Open questions (user to confirm)
+
+- Supabase project: the user creates it on their own account; no
+  project URL or key is recorded here (placeholders only in
+  `.env.example`).
+- GitHub repo: the user creates it; GitHub Apps cannot create user
+  repos via API. Push happens after the user creates it and grants the
+  app access.
+- Custom domain: Opiinio domain availability has not been checked and
+  nothing is bought. Do not buy without a separate approval plus the
+  exact checkout price.
+- Monetization implementation (ads, sponsored debates, premium) is a
+  later layer, not V1 scope. The plan was explained to the user; it is
+  not yet approved for implementation.
