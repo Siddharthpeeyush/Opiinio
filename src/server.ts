@@ -10,15 +10,48 @@ import { loadEnv } from "./lib/env.js";
 
 const env = loadEnv();
 
+async function readBody(req: import("node:http").IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buffer = chunk as Buffer;
+    total += buffer.length;
+    if (total > 1_048_576) {
+      // Hard memory cap: stop reading a pathological body. The API
+      // layer's own 64 KB limit still returns 413 for bodies
+      // between 64 KB and this cap; above it the body is dropped
+      // and the API layer reports a generic 400 instead.
+      return "";
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 async function handleRequest(
   req: import("node:http").IncomingMessage,
   res: import("node:http").ServerResponse,
 ): Promise<void> {
   try {
     const url = new URL(req.url ?? "/", `http://localhost:${env.port}`);
-    const result = await route(req.method ?? "GET", url.pathname, env);
+    const method = req.method ?? "GET";
+    const needsBody = method === "POST" || method === "PATCH" || method === "PUT";
+    const bodyText = needsBody ? await readBody(req) : null;
+    const result = await route(method, url.pathname, env, {
+      headers: {
+        authorization: req.headers.authorization ?? null,
+        origin: req.headers.origin ?? null,
+      },
+      bodyText,
+    });
+    // Security headers on every response; API routes add their own
+    // (CORS, no-store) on top. Node never sets X-Powered-By here.
     res.writeHead(result.statusCode, {
       "content-type": result.contentType,
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      ...result.headers,
     });
     res.end(result.body);
   } catch {

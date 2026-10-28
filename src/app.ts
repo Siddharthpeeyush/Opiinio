@@ -7,11 +7,20 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { EnvConfig } from "./lib/env.js";
 import { handleHealth, handleLive } from "./routes/health.js";
+import { handleApi, type ApiDeps } from "./routes/api.js";
+import { SECURITY_HEADERS } from "./lib/log.js";
 
 export interface RouteResult {
   statusCode: number;
   contentType: string;
   body: string;
+  headers?: Record<string, string>;
+}
+
+export interface RouteOptions {
+  headers?: { authorization?: string | null; origin?: string | null };
+  bodyText?: string | null;
+  apiDeps?: ApiDeps;
 }
 
 // The server always runs from dist/ (see package.json scripts), so
@@ -24,7 +33,32 @@ export async function route(
   method: string,
   pathname: string,
   env: EnvConfig,
+  opts: RouteOptions = {},
 ): Promise<RouteResult> {
+  // Layer 5 API routes (everything under /api/ except health).
+  // No /api/docs, no spec endpoint, no listing route exists here.
+  if (
+    pathname.startsWith("/api/") &&
+    pathname !== "/api/health" &&
+    pathname !== "/api/health/live"
+  ) {
+    const result = await handleApi(
+      method,
+      pathname,
+      {
+        authorization: opts.headers?.authorization ?? null,
+        origin: opts.headers?.origin ?? null,
+      },
+      opts.bodyText ?? null,
+      { ...opts.apiDeps, appOrigin: opts.apiDeps?.appOrigin ?? env.appOrigin },
+    );
+    return {
+      statusCode: result.statusCode,
+      contentType: "application/json",
+      body: result.body,
+      headers: result.headers,
+    };
+  }
   if (method === "GET" && pathname === "/api/health") {
     const result = handleHealth(env);
     return {
@@ -53,5 +87,6 @@ export async function route(
     statusCode: 404,
     contentType: "application/json",
     body: JSON.stringify({ error: { code: "NOT_FOUND", message: "Not found" } }),
+    headers: { ...SECURITY_HEADERS },
   };
 }

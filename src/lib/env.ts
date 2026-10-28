@@ -18,9 +18,11 @@ export interface EnvConfig {
   nodeEnv: string;
   /** Names of optional variables that are present (values never logged). */
   presentOptional: string[];
+  /** Single allowed CORS origin for the API (APP_ORIGIN, Layer 5). */
+  appOrigin: string | undefined;
 }
 
-const OPTIONAL_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY"] as const;
+const OPTIONAL_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "APP_ORIGIN"] as const;
 
 export function loadEnv(env: NodeJS.ProcessEnv = process.env): EnvConfig {
   const rawPort = env.PORT ?? "3000";
@@ -34,5 +36,7 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): EnvConfig {
   const presentOptional = OPTIONAL_VARS.filter(
     (name) => env[name] !== undefined && env[name] !== "",
   );
-  return { port, nodeEnv, presentOptional };
+  const appOrigin =
+    env.APP_ORIGIN !== undefined && env.APP_ORIGIN !== "" ? env.APP_ORIGIN : undefined;
+  return { port, nodeEnv, presentOptional, appOrigin };
 }

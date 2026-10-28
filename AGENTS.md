@@ -55,6 +55,16 @@ from paywalling the core.
    steps → verify with lint + typecheck + tests → review diff → record
    decision. Never edit a test to make it pass. Never call work complete
    with a failing or skipped test.
+9. Privacy in every aspect (user rule, 2026-10-29; see
+   `docs/decisions/0009-layer5-apis-privacy.md`): APIs are hidden
+   (no /api/docs, no spec endpoint, no listing route); auth first
+   and can() on every route (401 / 403 / private-row 404); private
+   tables own-only always; vote aggregates only, never voter lists;
+   anonymous masking in every response path; no email, tokens, or
+   secrets in responses or logs; generic errors; same-origin /
+   APP*ORIGIN CORS only, never '*'; no third-party trackers; no
+   enumeration oracles (no profile list, no "is handle/email taken"
+   endpoint); explicit columns only, never SELECT \_.
 
 ## Commands
 
@@ -95,6 +105,8 @@ include timeouts and component-level status (skill: operate-and-scale).
   live 2026-10-29.
 - 0008 Layer 4 auth (Supabase Auth, TOTP MFA only, no SMS) — written
   in code, providers not yet enabled live.
+- 0009 Layer 5 APIs (validated, privacy-first, hidden) — written
+  in code, no live Supabase call, frontend not yet built.
 
 ## What this repo is NOT
 
@@ -104,10 +116,11 @@ include timeouts and component-level status (skill: operate-and-scale).
 - It is NOT the old checklist folder (`~/workspace/opineo/`), which
   still says Opineo / Liquid Glass. That folder is untouched by this
   scaffold and is superseded by this repo's docs for name and look.
-- Auth and database migrations exist now (Layers 3–4, see
-  `docs/decisions/0007-layer3-database.md` and
-  `docs/decisions/0008-layer4-auth.md`); feature endpoints are the
-  next layers (Layer 5+).
+- Auth, database migrations, and feature APIs exist now (Layers 3–5,
+  see `docs/decisions/0007-layer3-database.md`,
+  `docs/decisions/0008-layer4-auth.md`, and
+  `docs/decisions/0009-layer5-apis-privacy.md`); the frontend is
+  the next layer (Layer 6+).
 
 ## Open questions (user to confirm)
 
@@ -123,7 +136,11 @@ include timeouts and component-level status (skill: operate-and-scale).
   label still reads "No migrations" — it only tracks CLI/GitHub
   integration, not SQL-Editor applies, and is not the proof.
   Layer 4 (auth) is written in code but providers are NOT yet
-  enabled live; see `AUTH-SETUP-GUIDE.md`.
+  enabled live; see `AUTH-SETUP-GUIDE.md`. Layer 5 (APIs) is
+  written in code (`src/services/api.ts`, `api2.ts`,
+  `src/routes/api.ts`, `docs/api-conventions.md`) but has made
+  no live Supabase call and has no frontend yet; see
+  `docs/decisions/0009-layer5-apis-privacy.md` for its gaps.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.
