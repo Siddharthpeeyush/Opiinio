@@ -105,9 +105,13 @@ include timeouts and component-level status (skill: operate-and-scale).
 
 ## Open questions (user to confirm)
 
-- Supabase project: the user creates it on their own account; no
-  project URL or key is recorded here (placeholders only in
-  `.env.example`).
+- Supabase project: CREATED by the user 2026-10-29 — name `opiinio`,
+  URL https://moahibzipoyyheaceonp.supabase.co, Status Healthy,
+  dashboard showed "No migrations" at creation. Anon key still
+  pending (placeholders only in `.env.example`); never record the
+  service_role key or database password here. Layer 3 migrations
+  are written (`supabase/migrations/`, see `MIGRATION-GUIDE.md`)
+  but NOT yet applied live by the user.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.
