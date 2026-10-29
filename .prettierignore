@@ -1,0 +1,4 @@
+# Prettier cannot parse TOML ("No parser could be inferred"), which made
+# `npm run format:check` (CI) fail on netlify.toml. This file is still
+# validated as TOML separately (see decision 0020).
+netlify.toml

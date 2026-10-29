@@ -19,6 +19,7 @@ decision.**
    sponsored-ads posting by the owner.
 
 ## Sequencing — DECIDED 2026-10-29 (user tapped "launch web first,
+
 ## then admin panel, then mobile")
 
 1. **Web launch first** — finish the pre-launch checklist (his Google
