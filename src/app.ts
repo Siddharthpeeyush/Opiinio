@@ -39,7 +39,16 @@ export interface RouteOptions {
 // src/app.ts compiles to dist/src/app.js and the public dir is two
 // levels up from there. Do not "fix" this to one level up: that was
 // the bug that made GET / fail in tests (it pointed at dist/public).
-const PUBLIC_DIR = join(import.meta.dirname, "..", "..", "public");
+//
+// Lazily resolved (never at module load): serverless bundlers
+// (Netlify's esbuild) leave import.meta.dirname undefined, which
+// crashed the function at import time (decision 0020). The function
+// only serves /api/*, so this path is never needed there — but module
+// load must not touch it regardless.
+function publicDir(): string {
+  const base = import.meta.dirname ?? process.cwd();
+  return join(base, "..", "..", "public");
+}
 
 /**
  * Cache policy (Layer 16): only static assets (public/*) may carry
@@ -165,7 +174,7 @@ export async function route(
     };
   }
   if (method === "GET" && (pathname === "/" || pathname === "/index.html")) {
-    const html = await readFile(join(PUBLIC_DIR, "index.html"), "utf8");
+    const html = await readFile(join(publicDir(), "index.html"), "utf8");
     return {
       statusCode: 200,
       contentType: "text/html",
@@ -174,7 +183,7 @@ export async function route(
     };
   }
   if (method === "GET" && pathname === "/styles.css") {
-    const css = await readFile(join(PUBLIC_DIR, "styles.css"), "utf8");
+    const css = await readFile(join(publicDir(), "styles.css"), "utf8");
     return {
       statusCode: 200,
       contentType: "text/css",
@@ -185,7 +194,7 @@ export async function route(
   if (method === "GET" && pathname === "/app.js") {
     // Layer 6 frontend. Same-origin script only; it fetches /api/*
     // and nothing else (see public/app.js header + frontend tests).
-    const js = await readFile(join(PUBLIC_DIR, "app.js"), "utf8");
+    const js = await readFile(join(publicDir(), "app.js"), "utf8");
     return {
       statusCode: 200,
       contentType: "text/javascript",

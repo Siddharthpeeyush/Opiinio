@@ -32,6 +32,19 @@ topology was documented without verifying the runtime fits the host.
   `tests/netlify-function.test.ts` (event mapping, non-API 404,
   env-refusal 503, base64 body decoding — through the real `route()`).
 
+## Follow-up fix (2026-10-30): lazy publicDir()
+
+The first deploy of the function crashed at import time:
+`TypeError: The "path" argument must be of type string. Received undefined`
+at `join(import.meta.dirname, …)` — Netlify's esbuild bundler leaves
+`import.meta.dirname` undefined, and `src/app.ts` evaluated it at module
+load. Fix: `PUBLIC_DIR` became a lazily-evaluated `publicDir()`
+function (same two-levels-up logic, `process.cwd()` fallback). The
+function only serves `/api/*`, which never reads static files, so the
+path is never resolved there — but module load must not touch it
+regardless. Verified: 200/200 tests (static serving still works via the
+server path).
+
 ## Consequences
 
 - **Rate limiting is weaker on serverless (honest, recorded):** the
