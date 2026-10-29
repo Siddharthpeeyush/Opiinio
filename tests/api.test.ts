@@ -4,6 +4,7 @@ import type { AuthUser } from "../src/lib/auth.js";
 import { ApiError } from "../src/lib/http.js";
 import * as api from "../src/services/api.js";
 import * as api2 from "../src/services/api2.js";
+import { StoreError } from "../src/db/store.js";
 import { FakeStore, seedStore } from "./fake-store.js";
 
 /**
@@ -375,5 +376,24 @@ describe("server-only tables and pagination", () => {
       },
     );
     assert.equal(marked.isRead, true);
+  });
+});
+
+describe("store failure mapping (decision 0020 follow-up)", () => {
+  it("listOpinions maps a rejected service key (401) to 503, never 500", async () => {
+    // Regression test for the live incident: PostgREST rejected our
+    // service key with 401, StoreError propagated unmapped, and the
+    // API answered cryptic 500 INTERNAL_ERROR. A rejected service
+    // key is a server misconfiguration -> generic 503.
+    class RejectedKeyStore extends FakeStore {
+      override async list(): Promise<never> {
+        throw new StoreError(401);
+      }
+    }
+    const store = new RejectedKeyStore();
+    await assert.rejects(
+      api.listOpinions(store, { user: null }, { limit: 20, cursor: null }),
+      (error: unknown) => statusOf(error) === 503,
+    );
   });
 });

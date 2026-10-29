@@ -168,6 +168,13 @@ function mapStoreError(error: unknown): never {
     if (error.status === 503) {
       throw new ApiError(503, "SERVICE_UNAVAILABLE", "Service unavailable");
     }
+    // 401/403 from PostgREST means OUR service key was rejected —
+    // a server misconfiguration, never the client's fault. Map to a
+    // generic 503 (decision 0020 follow-up: an unmapped 401 here used
+    // to surface as a cryptic 500 INTERNAL_ERROR on the live site).
+    if (error.status === 401 || error.status === 403) {
+      throw new ApiError(503, "SERVICE_UNAVAILABLE", "Service unavailable");
+    }
   }
   throw error;
 }
@@ -335,11 +342,16 @@ export async function listOpinions(
     // the query auditable and avoids an OR that widens the scan.
     filters.push(ilikeFilter("body", search));
   }
-  const result = await store.list("opinions", {
-    filters,
-    cursor: params.cursor,
-    limit: params.limit,
-  });
+  let result;
+  try {
+    result = await store.list("opinions", {
+      filters,
+      cursor: params.cursor,
+      limit: params.limit,
+    });
+  } catch (error) {
+    mapStoreError(error);
+  }
   const items: OpinionView[] = [];
   for (const row of result.rows) {
     items.push(await toOpinionView(store, caller.user, row));

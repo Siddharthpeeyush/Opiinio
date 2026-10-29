@@ -45,6 +45,20 @@ path is never resolved there — but module load must not touch it
 regardless. Verified: 200/200 tests (static serving still works via the
 server path).
 
+## Follow-up fix 2 (2026-10-30): StoreError 401/403 -> 503
+
+Live incident: `GET /api/opinions` returned cryptic 500 INTERNAL_ERROR.
+Root cause chain: PostgREST rejected our service key (401), `listOpinions`
+didn't wrap its store call in `mapStoreError` (unlike the other six call
+sites), and `mapStoreError` had no 401/403 branch — so the StoreError
+propagated to the generic 500. Fix: `listOpinions` now wraps with
+`mapStoreError`, and 401/403 from PostgREST map to generic 503
+SERVICE_UNAVAILABLE (a rejected service key is a server
+misconfiguration, never the client's fault). The frontend already
+treats 503 as labelled preview. Regression test in
+`tests/api.test.ts` ("store failure mapping"). The key value itself
+still needs owner verification in the Netlify dashboard.
+
 ## Consequences
 
 - **Rate limiting is weaker on serverless (honest, recorded):** the
