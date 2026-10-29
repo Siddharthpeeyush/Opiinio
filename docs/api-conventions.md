@@ -152,6 +152,53 @@ endpoint. Profile discovery (Explore "People to Discover") is
 not in Layer 5; it needs its own privacy review before it gets
 a route.
 
+## Auth routes (server auth layer, repo-only — same hiding rule)
+
+These routes are NOT a public product surface and are not
+served as documentation anywhere. The frontend calls them
+same-origin only; it never calls GoTrue/PostgREST directly.
+
+- `POST /api/auth/signup` {email, password} → own user +
+  session, or `emailConfirmationRequired: true` when GoTrue
+  issues no session. Failures are generic 400.
+- `POST /api/auth/signin` {email, password} → own session.
+  Bad credentials are one generic 401, never an oracle.
+- `POST /api/auth/signout` (Bearer) → {signedOut: true}.
+- `POST /api/auth/reset` {email} → {sent: true} whenever
+  GoTrue is reachable, even for an unknown email.
+- `POST /api/auth/refresh` {refresh_token} → new session.
+- `GET /api/auth/session` (Bearer) → own user + `aal`
+  (decoded only after GoTrue verified the token).
+- `GET /api/auth/google` → {url} = GoTrue authorize URL
+  for this project (`{SUPABASE_URL}/auth/v1/authorize?provider=google`).
+  The Google client's registered redirect URI is the
+  Supabase callback
+  `https://moahibzipoyyheaceonp.supabase.co/auth/v1/callback`
+  (dashboard + Google Cloud, never invented here); no
+  `redirect_to` is added by this code.
+- `POST /api/auth/mfa/enroll` (Bearer) → factorId, qrCode,
+  secret, uri (TOTP only, shown once, discarded after verify).
+- `POST /api/auth/mfa/challenge` (Bearer) → challengeId.
+- `POST /api/auth/mfa/verify` (Bearer) → {verified, session}
+  (session is the upgraded aal2 session when GoTrue issues one).
+- `GET /api/auth/mfa/factors` (Bearer) → own factors only.
+- `DELETE /api/auth/mfa/factors/:id` (Bearer) → aal-gated,
+  then unenroll.
+- `PATCH /api/auth/password` (Bearer) → aal-gated, then
+  GoTrue self-service password change.
+- `DELETE /api/auth/account` (Bearer) → aal-gated, then
+  403 SERVER_ONLY: GoTrue user deletion needs the admin API
+  - service_role key, which is never wired into this repo.
+    This route does NOT delete the auth account.
+
+Missing SUPABASE_URL/ANON_KEY → generic 503 for every auth
+route (unknown paths are 404 first, by the route-table check).
+Sessions are returned in the response body for sessionStorage
+use only (never localStorage, never a cookie to an arbitrary
+origin). Rate-limit enforcement is a later layer; auth routes
+call an optional hook so a limiter can wrap them without a
+rewrite, and the default hook is a no-op.
+
 ## Vote privacy and anonymous masking (response rules)
 
 - Opinions carry stance counts, like/repost/reply counts, and

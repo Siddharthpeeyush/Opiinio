@@ -16,10 +16,12 @@
  *   under a banner that says it is a preview, and preview actions
  *   are local-only with a "Preview only — not saved" notice. Sample
  *   posts, authors, and counts are never presented as real posts,
- *   real users, or a real session. Sign-in is NOT live in Layer 6:
- *   there is no /api/auth route in Layer 5, so the sign-in and MFA
- *   screens show their forms, validation, and auth-required /
- *   not-connected states, but never a fake signed-in session.
+ *   real users, or a real session. Sign-in / MFA go through the
+ *   SERVER /api/auth/* routes (server auth layer) — never
+ *   directly to Supabase — and a session is stored in
+ *   sessionStorage only, cleared on sign-out, never persistent browser storage.
+ *   When the API is unconfigured, auth calls return 503 and no
+ *   session is ever faked.
  * - Language toggle changes UI chrome only. It never translates
  *   another user's post (no paid translation API, by the ₹0 rule).
  */
@@ -398,7 +400,15 @@
   var state = {
     mode: "loading", // loading | preview | live
     lang: "en",
-    token: null, // never set by Layer 6 forms: no /api/auth route exists yet
+    // Session from the SERVER /api/auth/* routes only, stored in
+    // sessionStorage only. Null in preview.
+    token: null,
+    refreshToken: null,
+    user: null,
+    authMode: "signin", // signin | signup
+    pendingMfa: null, // { factorId, challengeId } while a sign-in challenge is open
+    mfaEnrollment: null, // { factorId, qrCode, secret, uri, challengeId } — discarded after verify
+    mfaFactors: null,
     route: "welcome",
     param: null,
     query: {},
@@ -464,6 +474,71 @@
     return parsed ? parsed.data : null;
   }
 
+  function saveSession(session) {
+    // sessionStorage only, per the Layer 6 plan. A session is
+    // never written to persistent browser storage and never logged.
+    if (!session || !session.accessToken) return;
+    state.token = session.accessToken;
+    state.refreshToken = session.refreshToken || null;
+    state.user = session.user || null;
+    try {
+      window.sessionStorage.setItem(
+        "opiinio.session",
+        JSON.stringify({
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken || null,
+          user: session.user || null,
+        }),
+      );
+    } catch (e) {
+      /* storage unavailable: session lives in memory for this tab only */
+    }
+  }
+
+  function loadSession() {
+    try {
+      var raw = window.sessionStorage.getItem("opiinio.session");
+      if (!raw) return;
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.accessToken) {
+        state.token = parsed.accessToken;
+        state.refreshToken = parsed.refreshToken || null;
+        state.user = parsed.user || null;
+      }
+    } catch (e) {
+      /* corrupt stored session: ignore it, do not fake one */
+    }
+  }
+
+  function clearSession() {
+    state.token = null;
+    state.refreshToken = null;
+    state.user = null;
+    state.pendingMfa = null;
+    try {
+      window.sessionStorage.removeItem("opiinio.session");
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  // Supabase Google flow returns to the Site URL (app origin) with
+  // tokens in the URL hash. Pick them up once, store them in
+  // sessionStorage, and clear the hash so tokens never linger in
+  // the address bar or history.
+  function consumeAuthHash() {
+    var hash = window.location.hash || "";
+    var params = new URLSearchParams(hash.replace(/^#/, ""));
+    var accessToken = params.get("access_token");
+    if (!accessToken) return;
+    saveSession({
+      accessToken: accessToken,
+      refreshToken: params.get("refresh_token"),
+      user: null,
+    });
+    window.history.replaceState(null, "", window.location.pathname + "#/feed");
+  }
+
   async function detectMode() {
     try {
       var data = await api("/opinions?limit=20");
@@ -480,6 +555,23 @@
     renderModeBanner();
   }
 
+  async function validateStoredSession() {
+    if (!state.token) return;
+    try {
+      var data = await api("/auth/session");
+      if (data && data.user) state.user = data.user;
+      // If the user has a verified factor and the session is
+      // still aal1, the sign-in challenge screen (not the feed)
+      // is the honest next step — handled by the sign-in screen
+      // when the user opens it; a stored aal1 session is not
+      // silently upgraded here.
+    } catch (e) {
+      if (e.status === 401) clearSession();
+      // 503 / network: keep the stored token for this tab; the
+      // next API call will surface the real error, not a fake.
+    }
+  }
+
   function renderModeBanner() {
     var banner = document.getElementById("mode-banner");
     if (!banner) return;
@@ -491,7 +583,7 @@
     } else if (state.mode === "live") {
       banner.innerHTML =
         "<strong>Connected to the live API.</strong> " +
-        "Public posts are real. Sign-in is still not wired in this layer, so writes that need a session will show a sign-in-required message.";
+        "Public posts are real. Writes that need a session will show a sign-in-required message when you are signed out.";
     } else {
       banner.textContent = "";
     }
@@ -1090,28 +1182,56 @@
       '<p class="meter-line">Agree 62% · <span aria-hidden="true">⚖</span> · Disagree 38%</p></div>' +
       '<a class="button" href="#/onboarding">Get started</a> ' +
       '<a class="button button--secondary" href="#/signin">Sign in</a>' +
-      '<p class="note">No account is created in preview mode. Sign-in is not live yet — providers are not enabled in Supabase.</p>' +
+      '<p class="note">No account is created in preview mode. In live mode, sign-in goes through the server auth routes; email and Google providers must be enabled in Supabase first (see the setup guide).</p>' +
       "</section>"
     );
   }
 
   function screenSignIn() {
+    if (state.pendingMfa) {
+      return (
+        '<section class="form-screen"><h1>Two-factor code</h1>' +
+        "<p>Your password was accepted. Enter the 6-digit code from your authenticator app to finish sign-in.</p>" +
+        '<form id="mfa-challenge-form" novalidate>' +
+        '<label for="mfa-challenge-code">6-digit code</label>' +
+        '<input id="mfa-challenge-code" name="code" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required />' +
+        '<button class="button" type="submit">Verify and sign in</button>' +
+        '<p id="mfa-challenge-error" class="form-error" role="alert"></p></form>' +
+        '<p class="note">SMS codes are never used — authenticator app (TOTP) only. There are no backup codes.</p>' +
+        "</section>"
+      );
+    }
+    var isSignup = state.authMode === "signup";
     return (
-      '<section class="form-screen"><h1>Sign in</h1>' +
-      '<div class="state state--error" role="alert"><h2>Sign-in is not live yet</h2>' +
-      "<p>Email and Google providers are not enabled live in Supabase yet, and Layer 5 has no sign-in API route. " +
-      "This form validates your input, but it does not create an account, sign anyone in, or store a session. " +
-      "Nothing you type here is sent anywhere in preview mode.</p></div>" +
+      '<section class="form-screen"><h1>' +
+      (isSignup ? "Create account" : "Sign in") +
+      "</h1>" +
+      (isPreview()
+        ? '<div class="state state--error" role="alert"><h2>Preview mode</h2>' +
+          "<p>The API is not connected, so no account is created or signed in here. " +
+          "In live mode this form calls the server auth routes — nothing is sent directly to Supabase from this page.</p></div>"
+        : "") +
       '<form id="signin-form" novalidate>' +
       '<label for="signin-email">Email address</label>' +
       '<input id="signin-email" name="email" type="email" autocomplete="email" required />' +
-      '<label for="signin-password">Password</label>' +
+      '<label for="signin-password">Password (8–128 characters)</label>' +
       '<input id="signin-password" name="password" type="password" autocomplete="current-password" required minlength="8" />' +
-      '<p class="field-note">Passwords are never typed into a real account here until sign-in is enabled.</p>' +
-      '<button class="button" type="submit">Sign in</button>' +
-      '<p id="signin-error" class="form-error" role="alert"></p></form>' +
-      '<button class="button button--secondary" type="button" data-action="google-signin">Continue with Google (not live yet)</button>' +
-      '<p class="note">Forgot your password? Password reset is part of sign-in enablement and is not live yet either.</p>' +
+      '<button class="button" type="submit">' +
+      (isSignup ? "Create account" : "Sign in") +
+      "</button>" +
+      '<p id="signin-error" class="form-error" role="alert"></p>' +
+      '<p id="signin-success" class="form-success" role="status"></p></form>' +
+      '<button class="button button--secondary" type="button" data-action="auth-toggle">' +
+      (isSignup ? "Already have an account? Sign in" : "New here? Create an account") +
+      "</button> " +
+      '<button class="button button--secondary" type="button" data-action="google-signin">Continue with Google</button>' +
+      '<form id="reset-form" novalidate><h2>Forgot your password?</h2>' +
+      '<label for="reset-email">Email address</label>' +
+      '<input id="reset-email" name="email" type="email" autocomplete="email" required />' +
+      '<button class="button button--small" type="submit">Send reset link</button>' +
+      '<p id="reset-success" class="form-success" role="status"></p>' +
+      '<p id="reset-error" class="form-error" role="alert"></p></form>' +
+      '<p class="note">If an account exists for that email, a reset link is sent. The reply is the same either way, so it cannot be used to check whether an email has an account.</p>' +
       "</section>"
     );
   }
@@ -1705,29 +1825,88 @@
       '<button class="button" type="submit">Save profile</button>' +
       '<p id="account-error" class="form-error" role="alert"></p>' +
       '<p id="account-success" class="form-success" role="status"></p></form>' +
+      '<form id="password-form" novalidate><h2>Change password</h2>' +
+      '<label for="new-password">New password (8–128 characters)</label>' +
+      '<input id="new-password" type="password" autocomplete="new-password" required minlength="8" />' +
+      '<button class="button" type="submit">Change password</button>' +
+      '<p id="password-error" class="form-error" role="alert"></p>' +
+      '<p id="password-success" class="form-success" role="status"></p></form>' +
       "<h2>Delete account</h2>" +
       '<p class="note">Account deletion is a sensitive action. With two-factor authentication on, it needs a verified second factor. ' +
-      "It is not wired to a live account in this layer, so this button shows the confirmation step only.</p>" +
-      '<button class="button button--danger" type="button" data-action="delete-account">Delete my account (not live yet)</button>'
+      "Full deletion of the auth account is a server-only admin step (it needs a key that is never in this app), so this button checks the gate and reports that boundary honestly instead of pretending the account was deleted.</p>" +
+      '<button class="button button--danger" type="button" data-action="delete-account">Delete my account</button>'
     );
   }
 
   function mfaHtml() {
+    if (!state.token) {
+      return (
+        "<h2>Two-factor authentication (authenticator app only)</h2>" +
+        stateHtml("empty", {
+          title: "Sign in to manage two-factor authentication",
+          text: "MFA settings belong to your signed-in account only.",
+          action: { href: "#/signin", label: "Sign in" },
+        })
+      );
+    }
+    var enrollment = state.mfaEnrollment;
+    var qrHtml = "";
+    if (enrollment) {
+      if (enrollment.qrCode && enrollment.qrCode.indexOf("<svg") === 0) {
+        qrHtml =
+          '<div class="qr-code" aria-label="QR code for your authenticator app">' +
+          enrollment.qrCode +
+          "</div>";
+      } else if (enrollment.qrCode && enrollment.qrCode.indexOf("data:image") === 0) {
+        qrHtml =
+          '<img class="qr-code" alt="QR code for your authenticator app" src="' +
+          esc(enrollment.qrCode) +
+          '" />';
+      }
+      qrHtml +=
+        "<p><strong>Manual secret (shown once — copy it now, it is not shown again):</strong> <code>" +
+        esc(enrollment.secret) +
+        "</code></p>" +
+        '<p class="field-note">After you verify a code below, this secret is discarded from the page. It is never stored in sessionStorage or logged.</p>';
+    }
+    var factorsHtml = "";
+    if (state.mfaFactors) {
+      factorsHtml =
+        state.mfaFactors.length === 0
+          ? "<p>No two-factor factors enrolled.</p>"
+          : "<ul>" +
+            state.mfaFactors
+              .map(function (f) {
+                return (
+                  "<li>" +
+                  esc(f.friendlyName || f.id) +
+                  " · " +
+                  esc(f.factorType) +
+                  " · " +
+                  esc(f.status) +
+                  ' <button type="button" data-action="mfa-unenroll" data-factor="' +
+                  esc(f.id) +
+                  '">Turn off</button></li>'
+                );
+              })
+              .join("") +
+            "</ul>";
+    }
     return (
       "<h2>Two-factor authentication (authenticator app only)</h2>" +
-      '<div class="state state--error" role="alert"><h2>Not connected yet</h2>' +
-      "<p>Two-factor setup needs a live signed-in session and a server MFA route. Layer 5 has no such route, and this frontend never calls Supabase directly, " +
-      "so nothing below enrolls, verifies, or unenrolls anything yet. The QR placeholder is an illustration only — it is not a real secret, do not scan it.</p></div>" +
       "<ol><li>Open an authenticator app (for example Google Authenticator or Authy).</li>" +
-      "<li>Scan the QR code shown after sign-in is enabled, or enter the secret manually.</li>" +
+      "<li>Scan the QR code, or enter the secret manually.</li>" +
       "<li>Enter the 6-digit code from the app to finish setup. SMS codes are never used — TOTP only, so setup stays free.</li></ol>" +
-      '<div class="qr-placeholder" aria-label="QR code placeholder — not a real secret">[ QR code will appear here after sign-in ]</div>' +
+      '<button class="button" type="button" data-action="mfa-enroll">Start two-factor setup</button> ' +
+      '<button class="button button--secondary" type="button" data-action="mfa-list">Show my factors</button>' +
+      (factorsHtml ? "<h3>Your factors</h3>" + factorsHtml : "") +
+      (enrollment ? "<h3>Scan and verify</h3>" + qrHtml : "") +
       '<form id="mfa-verify-form" novalidate>' +
       '<label for="mfa-code">6-digit code from your authenticator app</label>' +
       '<input id="mfa-code" name="code" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required />' +
       '<button class="button" type="submit">Verify code</button>' +
-      '<p id="mfa-error" class="form-error" role="alert"></p></form>' +
-      '<button class="button button--secondary" type="button" data-action="mfa-unenroll">Turn off two-factor authentication (not live yet)</button>' +
+      '<p id="mfa-error" class="form-error" role="alert"></p>' +
+      '<p id="mfa-success" class="form-success" role="status"></p></form>' +
       '<p class="note">Lost your device? Recovery is unenrolling from a signed-in session, or admin unenroll in the Supabase dashboard. ' +
       "There are no backup codes in Supabase MFA, and this app invents none.</p>"
     );
@@ -1881,21 +2060,137 @@
 
     var signin = document.getElementById("signin-form");
     if (signin) {
-      signin.addEventListener("submit", function (e) {
+      signin.addEventListener("submit", async function (e) {
         e.preventDefault();
         var email = document.getElementById("signin-email").value.trim();
         var password = document.getElementById("signin-password").value;
         var err = document.getElementById("signin-error");
+        var ok = document.getElementById("signin-success");
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
           err.textContent = "Enter a valid email address.";
           return;
         }
-        if (password.length < 8) {
-          err.textContent = "Password must be at least 8 characters.";
+        if (password.length < 8 || password.length > 128) {
+          err.textContent = "Password must be 8–128 characters.";
           return;
         }
-        err.textContent =
-          "Sign-in is not live yet — no account was created and no session was stored. Providers must be enabled first.";
+        err.textContent = "";
+        if (ok) ok.textContent = "";
+        try {
+          var path = state.authMode === "signup" ? "/auth/signup" : "/auth/signin";
+          var data = await api(path, {
+            method: "POST",
+            body: { email: email, password: password },
+          });
+          if (state.authMode === "signup") {
+            if (data && data.session) {
+              saveSession(data.session);
+              showToast("Account created. Welcome to Opiinio.");
+              window.location.hash = "#/feed";
+            } else {
+              if (ok)
+                ok.textContent =
+                  "Account created. Check your email for the confirmation link, then sign in.";
+            }
+            return;
+          }
+          if (data && data.session) saveSession(data.session);
+          // Step-up check: a verified factor + aal1 session needs
+          // a code before the session can do sensitive actions.
+          try {
+            var sessionData = await api("/auth/session");
+            var factorsData = await api("/auth/mfa/factors");
+            var hasVerified = (factorsData.items || []).some(function (f) {
+              return f.factorType === "totp" && f.status === "verified";
+            });
+            if (hasVerified && sessionData && sessionData.aal !== "aal2") {
+              var challengeData = await api("/auth/mfa/challenge", {
+                method: "POST",
+                body: {
+                  factor_id: (factorsData.items || []).find(function (f) {
+                    return f.factorType === "totp" && f.status === "verified";
+                  }).id,
+                },
+              });
+              state.pendingMfa = {
+                factorId: (factorsData.items || []).find(function (f) {
+                  return f.factorType === "totp" && f.status === "verified";
+                }).id,
+                challengeId: challengeData.challengeId,
+              };
+              route();
+              return;
+            }
+          } catch (stepErr) {
+            // A failed step-up check must not turn a valid sign-in
+            // into a fake failure: fall through to the feed, where
+            // sensitive actions will re-check aal on the server.
+          }
+          showToast("Signed in. Welcome back.");
+          window.location.hash = "#/feed";
+        } catch (err2) {
+          err.textContent =
+            err2.status === 401
+              ? "Invalid email or password."
+              : err2.status === 503
+                ? "Auth service unavailable. Check back shortly — no account was changed."
+                : "Could not sign in. Check your details and try again.";
+        }
+      });
+    }
+
+    var resetForm = document.getElementById("reset-form");
+    if (resetForm) {
+      resetForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var email = document.getElementById("reset-email").value.trim();
+        var ok = document.getElementById("reset-success");
+        var err = document.getElementById("reset-error");
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+          err.textContent = "Enter a valid email address.";
+          return;
+        }
+        err.textContent = "";
+        try {
+          await api("/auth/reset", { method: "POST", body: { email: email } });
+        } catch (e2) {
+          // Reset is deliberately oracle-free: the message is the
+          // same whether or not an account exists for this email.
+        }
+        if (ok)
+          ok.textContent = "If an account exists for that email, a reset link was sent.";
+      });
+    }
+
+    var mfaChallengeForm = document.getElementById("mfa-challenge-form");
+    if (mfaChallengeForm) {
+      mfaChallengeForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var code = document.getElementById("mfa-challenge-code").value.trim();
+        var err = document.getElementById("mfa-challenge-error");
+        if (!/^\d{6}$/.test(code)) {
+          err.textContent = "Code must be exactly 6 digits.";
+          return;
+        }
+        try {
+          var data = await api("/auth/mfa/verify", {
+            method: "POST",
+            body: {
+              factor_id: state.pendingMfa.factorId,
+              challenge_id: state.pendingMfa.challengeId,
+              code: code,
+            },
+          });
+          if (data && data.session) saveSession(data.session);
+          state.pendingMfa = null;
+          showToast("Two-factor verified. Signed in.");
+          window.location.hash = "#/feed";
+        } catch (err2) {
+          err.textContent =
+            err2.status === 401
+              ? "Sign in required to verify a code."
+              : "Invalid code. Try the current code from your authenticator app.";
+        }
       });
     }
 
@@ -1961,11 +2256,24 @@
           : false;
         if (!isPreview()) {
           try {
-            await api("/opinions", {
+            var created = await api("/opinions", {
               method: "POST",
               body: { body: body, topic: topic, is_anonymous: anon },
             });
-            okEl.textContent = "Opinion posted.";
+            if (pollOptions.length >= 2 && created && created.id) {
+              try {
+                await api("/opinions/" + created.id + "/polls", {
+                  method: "POST",
+                  body: { options: pollOptions },
+                });
+                okEl.textContent = "Opinion posted with poll.";
+              } catch (pollErr) {
+                okEl.textContent =
+                  "Opinion posted, but the poll could not be created. You can add a poll from the post page in live mode.";
+              }
+            } else {
+              okEl.textContent = "Opinion posted.";
+            }
           } catch (err) {
             errEl.textContent =
               err.status === 401
@@ -2112,18 +2420,81 @@
       });
     }
 
+    var passwordForm = document.getElementById("password-form");
+    if (passwordForm) {
+      passwordForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var password = document.getElementById("new-password").value;
+        var errEl = document.getElementById("password-error");
+        var okEl = document.getElementById("password-success");
+        if (password.length < 8 || password.length > 128) {
+          errEl.textContent = "Password must be 8–128 characters.";
+          return;
+        }
+        errEl.textContent = "";
+        if (!state.token) {
+          errEl.textContent = "Sign in required to change your password.";
+          return;
+        }
+        try {
+          await api("/auth/password", {
+            method: "PATCH",
+            body: { password: password },
+          });
+          okEl.textContent = "Password changed.";
+        } catch (err2) {
+          errEl.textContent =
+            err2.status === 401
+              ? "Sign in required to change your password."
+              : err2.status === 403
+                ? "Verify your second factor first, then try again."
+                : "Could not change your password.";
+        }
+      });
+    }
+
     var mfaForm = document.getElementById("mfa-verify-form");
     if (mfaForm) {
-      mfaForm.addEventListener("submit", function (e) {
+      mfaForm.addEventListener("submit", async function (e) {
         e.preventDefault();
         var code = document.getElementById("mfa-code").value.trim();
         var errEl = document.getElementById("mfa-error");
+        var okEl = document.getElementById("mfa-success");
         if (!/^\d{6}$/.test(code)) {
           errEl.textContent = "Code must be exactly 6 digits.";
           return;
         }
-        errEl.textContent =
-          "Not connected yet — this code was not verified and no factor was enrolled. Two-factor setup needs a live session.";
+        if (!state.token) {
+          errEl.textContent = "Sign in required to verify a code.";
+          return;
+        }
+        if (!state.mfaEnrollment) {
+          errEl.textContent =
+            "Start two-factor setup first, then enter the code from your authenticator app.";
+          return;
+        }
+        errEl.textContent = "";
+        try {
+          var data = await api("/auth/mfa/verify", {
+            method: "POST",
+            body: {
+              factor_id: state.mfaEnrollment.factorId,
+              challenge_id: state.mfaEnrollment.challengeId,
+              code: code,
+            },
+          });
+          // Secret + QR are discarded after verification — never
+          // stored, never shown again.
+          state.mfaEnrollment = null;
+          if (data && data.session) saveSession(data.session);
+          if (okEl) okEl.textContent = "Two-factor authentication is on.";
+          route();
+        } catch (err2) {
+          errEl.textContent =
+            err2.status === 401
+              ? "Sign in required to verify a code."
+              : "Invalid code. Try the current code from your authenticator app.";
+        }
       });
     }
   }
@@ -2139,18 +2510,144 @@
       route();
       return;
     }
+    if (action === "auth-toggle") {
+      state.authMode = state.authMode === "signup" ? "signin" : "signup";
+      route();
+      return;
+    }
     if (action === "google-signin") {
-      showToast("Google sign-in is not live yet — no account was connected.");
+      (async function () {
+        try {
+          var data = await api("/auth/google");
+          if (data && data.url) {
+            window.location.href = data.url;
+          } else {
+            showToast("Google sign-in could not be started.");
+          }
+        } catch (err) {
+          showToast(
+            err.status === 503
+              ? "Auth service unavailable. Google sign-in cannot start right now."
+              : "Google sign-in could not be started. The Google provider may not be enabled yet.",
+          );
+        }
+      })();
       return;
     }
     if (action === "delete-account") {
-      showToast(
-        "Account deletion is not live yet. This button does not delete anything.",
-      );
+      if (!state.token) {
+        showToast("Sign in required to delete an account.");
+        return;
+      }
+      if (
+        !window.confirm(
+          "Delete your account? This step checks the server gate; full auth-account deletion is a server-only admin step and will be reported honestly, not pretended.",
+        )
+      ) {
+        return;
+      }
+      (async function () {
+        try {
+          await api("/auth/account", { method: "DELETE" });
+          showToast("Account deletion completed.");
+          clearSession();
+          window.location.hash = "#/welcome";
+        } catch (err) {
+          if (err.code === "SERVER_ONLY") {
+            showToast(
+              "Account deletion needs an admin step: the server gate passed, but the auth account itself is not deleted by this route (it needs a key that is never in this app).",
+            );
+          } else if (err.status === 403) {
+            showToast("Verify your second factor first, then try again.");
+          } else if (err.status === 401) {
+            showToast("Sign in required to delete an account.");
+          } else {
+            showToast("Could not delete your account.");
+          }
+        }
+      })();
+      return;
+    }
+    if (action === "mfa-enroll") {
+      if (!state.token) {
+        showToast("Sign in required to set up two-factor authentication.");
+        return;
+      }
+      (async function () {
+        try {
+          var enrollment = await api("/auth/mfa/enroll", {
+            method: "POST",
+            body: { friendly_name: "Opiinio authenticator" },
+          });
+          var challenge = await api("/auth/mfa/challenge", {
+            method: "POST",
+            body: { factor_id: enrollment.factorId },
+          });
+          state.mfaEnrollment = {
+            factorId: enrollment.factorId,
+            qrCode: enrollment.qrCode,
+            secret: enrollment.secret,
+            uri: enrollment.uri,
+            challengeId: challenge.challengeId,
+          };
+          route();
+        } catch (err) {
+          showToast(
+            err.status === 401
+              ? "Sign in required to set up two-factor authentication."
+              : "Could not start two-factor setup.",
+          );
+        }
+      })();
+      return;
+    }
+    if (action === "mfa-list") {
+      if (!state.token) {
+        showToast("Sign in required to list your factors.");
+        return;
+      }
+      (async function () {
+        try {
+          var data = await api("/auth/mfa/factors");
+          state.mfaFactors = data.items || [];
+          route();
+        } catch (err) {
+          showToast("Could not list your factors.");
+        }
+      })();
       return;
     }
     if (action === "mfa-unenroll") {
-      showToast("Two-factor unenroll is not live yet. Nothing was changed.");
+      if (!state.token) {
+        showToast("Sign in required to turn off two-factor authentication.");
+        return;
+      }
+      (async function () {
+        try {
+          var factorId = target.getAttribute("data-factor");
+          if (!factorId) {
+            var data = await api("/auth/mfa/factors");
+            var verified = (data.items || []).find(function (f) {
+              return f.factorType === "totp" && f.status === "verified";
+            });
+            factorId = verified ? verified.id : null;
+          }
+          if (!factorId) {
+            showToast("No verified two-factor factor to turn off.");
+            return;
+          }
+          await api("/auth/mfa/factors/" + factorId, { method: "DELETE" });
+          state.mfaFactors = null;
+          showToast("Two-factor authentication turned off.");
+          route();
+        } catch (err) {
+          showToast(
+            err.status === 403
+              ? "Verify your second factor first, then try again."
+              : "Could not turn off two-factor authentication.",
+          );
+        }
+      })();
       return;
     }
     if (action === "unmute-word") {
@@ -2200,7 +2697,10 @@
   window.addEventListener("hashchange", route);
 
   (async function boot() {
+    loadSession();
+    consumeAuthHash();
     await detectMode();
+    await validateStoredSession();
     renderModeBanner();
     applyLang();
     route();

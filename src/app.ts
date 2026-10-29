@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { EnvConfig } from "./lib/env.js";
 import { handleHealth, handleLive } from "./routes/health.js";
 import { handleApi, type ApiDeps } from "./routes/api.js";
+import { handleAuth, type AuthDeps } from "./routes/auth.js";
 import { SECURITY_HEADERS } from "./lib/log.js";
 
 export interface RouteResult {
@@ -21,6 +22,7 @@ export interface RouteOptions {
   headers?: { authorization?: string | null; origin?: string | null };
   bodyText?: string | null;
   apiDeps?: ApiDeps;
+  authDeps?: AuthDeps;
 }
 
 // The server always runs from dist/ (see package.json scripts), so
@@ -35,6 +37,28 @@ export async function route(
   env: EnvConfig,
   opts: RouteOptions = {},
 ): Promise<RouteResult> {
+  // Server auth routes (the /api/auth/* layer). Dispatched before
+  // the generic API routes
+  // so auth has its own route table, CORS, and logging — and so
+  // an unknown /api/auth path gets the same generic 404.
+  if (pathname.startsWith("/api/auth/")) {
+    const result = await handleAuth(
+      method,
+      pathname,
+      {
+        authorization: opts.headers?.authorization ?? null,
+        origin: opts.headers?.origin ?? null,
+      },
+      opts.bodyText ?? null,
+      { ...opts.authDeps, appOrigin: opts.authDeps?.appOrigin ?? env.appOrigin },
+    );
+    return {
+      statusCode: result.statusCode,
+      contentType: "application/json",
+      body: result.body,
+      headers: result.headers,
+    };
+  }
   // Layer 5 API routes (everything under /api/ except health).
   // No /api/docs, no spec endpoint, no listing route exists here.
   if (

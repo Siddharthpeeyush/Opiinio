@@ -111,6 +111,11 @@ include timeouts and component-level status (skill: operate-and-scale).
   labelled preview mode) — written in code, sign-in/MFA
   end-to-end NOT yet live (no /api/auth route, providers not
   enabled live); see docs/decisions/0010-layer6-frontend.md.
+- 0011 Server auth routes (/api/auth/\*, GoTrue proxied from the
+  server only, TOTP MFA, aal-gated sensitive actions) — written
+  in code, providers not yet enabled live, account deletion
+  gated but SERVER_ONLY; see
+  docs/decisions/0011-server-auth-routes.md.
 
 ## What this repo is NOT
 
@@ -147,10 +152,17 @@ include timeouts and component-level status (skill: operate-and-scale).
   no live Supabase call; see
   `docs/decisions/0009-layer5-apis-privacy.md` for its gaps.
   Layer 6 (frontend, `public/index.html`, `public/app.js`,
-  `public/styles.css`) is written in code but sign-in/MFA
-  end-to-end is NOT live (no /api/auth route yet, providers not
-  enabled live) and no live visual 390px/1440px check has been
-  run; see `docs/decisions/0010-layer6-frontend.md`.
+  `public/styles.css`) is written in code; server auth routes
+  (`/api/auth/*`, `src/routes/auth.ts`,
+  `src/services/authService.ts`) are now also written in code
+  and wired to the frontend, but sign-in/MFA end-to-end is NOT
+  live (providers not enabled live, migration 05 not applied
+  live, no key shared) and no live visual 390px/1440px check
+  has been run; see
+  `docs/decisions/0011-server-auth-routes.md`. Account
+  deletion is aal-gated but SERVER_ONLY in this layer (GoTrue
+  admin deletion needs a service_role key that is never wired
+  here).
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.
