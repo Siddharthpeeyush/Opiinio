@@ -386,8 +386,8 @@ describe("store failure mapping (decision 0020 follow-up)", () => {
     // API answered cryptic 500 INTERNAL_ERROR. A rejected service
     // key is a server misconfiguration -> generic 503.
     class RejectedKeyStore extends FakeStore {
-      override async list(): Promise<never> {
-        throw new StoreError(401);
+      override list(): Promise<never> {
+        return Promise.reject(new StoreError(401));
       }
     }
     const store = new RejectedKeyStore();

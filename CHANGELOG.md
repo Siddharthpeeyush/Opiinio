@@ -4,6 +4,31 @@ All notable changes, newest first. One entry per layer. Dates in IST.
 
 ## Unreleased
 
+### Missing table GRANTs outage fix (2026-10-30)
+
+- **Post-mortem:** the live API's 503s were not a bad anon key — the
+  Supabase API logs proved the key was valid and accepted. Every
+  PostgREST call failed with Postgres 42501 "permission denied for
+  table" because migrations 01–05 created tables + RLS policies but
+  never GRANTed table privileges to `anon`/`authenticated` (my miss in
+  Layer 3 verification — "RLS enabled" was checked, a live read never
+  was). See docs/decisions/0021-grants-outage.md.
+- Added `supabase/migrations/20261030060000_grants.sql`: `GRANT SELECT`
+  to `anon`, `GRANT SELECT, INSERT, UPDATE, DELETE` to `authenticated`
+  on all 18 V1 tables, plus `ALTER DEFAULT PRIVILEGES` for future
+  tables. Grants do not bypass RLS — the migration-04 policies remain
+  the real enforcement.
+- Added a regression test (`tests/database.test.ts`, static like the
+  rest): every V1 table must appear in the grants migration with the
+  anon/authenticated grant statements present. This would have failed
+  on the pre-fix tree.
+- `MIGRATION-GUIDE.md` now carries the standing rule: after ANY live
+  migration, run one unauthenticated read (`set role anon; select id
+from public.opinions limit 1;`) before calling it verified.
+- Also fixed: `require-await` lint error in the ccee1291 401→503
+  regression test (`tests/api.test.ts`) — the earlier "lint clean"
+  claim was wrong; lint is actually clean now.
+
 ### Netlify Functions adapter (2026-10-29)
 
 - **Honest correction:** Netlify's free tier serves static files and

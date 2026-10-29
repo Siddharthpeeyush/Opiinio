@@ -100,6 +100,25 @@ production. To use it:
    did not fire — report it, do not hand-edit the counts.
 4. Delete the seed users (and their rows) before launch.
 
+## Standing rule: verify with a live read, not just the dashboard
+
+After ANY migration is applied live — including this grants migration —
+run one unauthenticated read against a public table before calling it
+verified, e.g. in the SQL Editor's API preview or with curl:
+
+```sql
+-- as the anon role: must return rows (or zero rows), never 42501
+set role anon;
+select id from public.opinions limit 1;
+reset role;
+```
+
+"RLS enabled" on the dashboard is not proof the API path works. The
+2026-10-30 outage proved it: tables + policies were all present, but the
+missing GRANTs made every PostgREST call fail with 42501 (surfaced as
+HTTP 401), and only a live read would have caught it. See
+docs/decisions/0021-grants-outage.md.
+
 ## What is still NOT done after this guide
 
 - **Live cross-user proof:** the file tests in this repo prove the

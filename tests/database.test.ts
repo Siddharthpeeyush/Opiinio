@@ -122,6 +122,37 @@ describe("Layer 3 migrations (files, not a live database)", () => {
     }
   });
 
+  it("grants table privileges to anon/authenticated on every V1 table", async () => {
+    // Regression test for the 2026-10-30 outage: migrations 01–05 created
+    // tables + RLS policies but no GRANTs, so every PostgREST call failed
+    // with 42501 "permission denied for table" (surfaced as HTTP 401).
+    // "RLS enabled" is not enough — the roles must also hold table
+    // privileges to reach the policy check. The grants live in the
+    // 20261030060000_grants migration as a DO loop over a literal list,
+    // so assert each table is named there and the grant statements exist.
+    const { all } = await readMigrations();
+    const grants = all.slice(all.indexOf("Migration 6 of 6"));
+    assert.ok(grants.length > 0, "grants migration (Migration 6 of 6) not found");
+    for (const table of EXPECTED_TABLES) {
+      assert.ok(grants.includes(`'${table}'`), `table ${table} not in the grants list`);
+    }
+    assert.match(
+      grants,
+      /grant select on public\.%I to anon/i,
+      "missing anon SELECT grant",
+    );
+    assert.match(
+      grants,
+      /grant select, insert, update, delete on public\.%I to authenticated/i,
+      "missing authenticated read/write grant",
+    );
+    assert.match(
+      grants,
+      /alter default privileges/i,
+      "missing alter default privileges for future tables",
+    );
+  });
+
   it("enforces the 280-character limit in the database, not just in UI code", async () => {
     const { core } = await readMigrations();
     for (const fragment of [
