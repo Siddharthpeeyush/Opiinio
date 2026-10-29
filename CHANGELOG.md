@@ -4,6 +4,23 @@ All notable changes, newest first. One entry per layer. Dates in IST.
 
 ## Unreleased
 
+### Polish pass (2026-10-29)
+
+- Added an inline SVG data-URI favicon (`public/index.html`): cream
+  rounded square, ink border, serif "Oi" — matches the editorial look,
+  zero dependencies, works offline and under `file://`.
+- Preview-mode banner is now route-aware (`public/app.js`): the
+  "Sample opinions below are illustrative only" line shows only on
+  screens that render sample opinions (feed, explore, debates,
+  notifications, profile, post, welcome); sign-in, onboarding,
+  compose, settings get the shorter preview line.
+- Bug found and fixed: the banner never re-rendered on hash-change
+  navigation (was boot-only). `route()` now calls
+  `renderModeBanner()` after setting `state.route`. Verified live in
+  headless Chromium, including in-app navigation without reload.
+- Decision record: `docs/decisions/0018-polish-pass.md`. Local only,
+  not pushed.
+
 ### Final layer: load/cost checks + Layer 16 (2026-10-29)
 
 - Added `src/lib/audit.ts`: id-only audit trail in the structured

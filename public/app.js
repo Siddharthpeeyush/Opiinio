@@ -1044,9 +1044,24 @@
     var banner = document.getElementById("mode-banner");
     if (!banner) return;
     if (state.mode === "preview") {
+      // Screens that render sample opinions keep the "illustrative only"
+      // line; screens with no opinions below (sign-in, onboarding,
+      // compose, settings) get the shorter preview line instead.
+      var sampleRoutes = [
+        "feed",
+        "explore",
+        "debates",
+        "notifications",
+        "profile",
+        "post",
+        "welcome",
+      ];
+      var hasSamples = sampleRoutes.indexOf(state.route) !== -1;
       banner.innerHTML =
         "<strong>Preview mode — not connected to live accounts.</strong> " +
-        "Sample opinions below are illustrative only, not real posts or users. " +
+        (hasSamples
+          ? "Sample opinions below are illustrative only, not real posts or users. "
+          : "") +
         "Sign-in, posting, and saving are not live yet; preview actions are local only and are not saved to Opiinio.";
     } else if (state.mode === "live") {
       banner.innerHTML =
@@ -3005,6 +3020,10 @@
     state.query = parsed.query;
     state.route = segments[0] || "welcome";
     state.param = segments[1] ? decodeURIComponent(segments[1]) : null;
+    // The banner copy is route-aware (sample-opinions line only on
+    // screens that show sample opinions), so it must re-render on
+    // every navigation, not just on boot.
+    renderModeBanner();
     if (state.route === "feed") {
       state.tab = parsed.query.tab || "for-you";
       if (parsed.query.topic) {

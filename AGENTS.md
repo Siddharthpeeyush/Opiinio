@@ -249,6 +249,16 @@ max-age=600` on static assets only, API stays no-store;
   docs/decisions/0017-final-layer.md. **Playbook build complete
   after this layer** — remaining work is the owner's dashboard
   steps + undecided items in the pre-launch checklist.
+- 0018 Polish pass (favicon + route-aware preview banner) — written
+  in code, NOT pushed: inline SVG data-URI favicon in
+  `public/index.html` (editorial cream/ink "Oi", zero deps);
+  `renderModeBanner()` is route-aware (sample-opinions line only on
+  screens that show sample opinions) and is now called from
+  `route()` on every navigation — this exposed and fixed a real bug
+  where the banner never re-rendered after in-app hash navigation.
+  Verified live in headless Chromium (5 routes + in-app nav).
+  Tests 196/196, lint/typecheck clean. See
+  docs/decisions/0018-polish-pass.md.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.
