@@ -61,6 +61,7 @@ import {
 } from "../lib/http.js";
 import { corsHeaders } from "../lib/cors.js";
 import { logRequest, newRequestId, SECURITY_HEADERS } from "../lib/log.js";
+import { auditLog } from "../lib/audit.js";
 import { reportError } from "../lib/errors.js";
 import { hashKeyPart } from "../lib/rateLimit.js";
 import { hasVerifiedTotpFactor, listFactors, unenrollTotp } from "../lib/mfa.js";
@@ -342,6 +343,14 @@ export async function handleAuth(
       }
       // Secret + QR are returned ONCE, to the enrolling user only.
       // The frontend must discard them after verification.
+      // Audit: the factor id is an identifier, never a secret.
+      auditLog({
+        requestId,
+        userId: session.user.id,
+        action: "mfa.enroll",
+        target: enrollment.factorId,
+        appEnv,
+      });
       outcome = wrap(json(201, enrollment), session.user.id);
     } else if (tail[0] === "mfa" && tail[1] === "challenge" && method === "POST") {
       const session = await resolveSession(deps, config, headers.authorization);
@@ -398,6 +407,16 @@ export async function handleAuth(
       if (!removed) {
         throw new ApiError(400, "VALIDATION_ERROR", "Could not remove factor");
       }
+      // Audit: factorId comes from the URL path; it is an
+      // identifier, and JSON.stringify escapes it — no log
+      // injection is possible through this field.
+      auditLog({
+        requestId,
+        userId: session.user.id,
+        action: "mfa.unenroll",
+        target: factorId,
+        appEnv,
+      });
       outcome = wrap(empty(204), session.user.id);
     } else if (tail[0] === "password" && method === "PATCH") {
       const session = await resolveSession(deps, config, headers.authorization);
@@ -418,6 +437,16 @@ export async function handleAuth(
         passwordBody.password,
         fetchImpl,
       );
+      // Audit: the fact of the change is recorded; the password
+      // itself never reaches any log (see the standing privacy
+      // rule — auditLog's type has no field it could arrive on).
+      auditLog({
+        requestId,
+        userId: session.user.id,
+        action: "auth.password_change",
+        target: "self",
+        appEnv,
+      });
       outcome = wrap(json(200, result), session.user.id);
     } else if (tail[0] === "account" && method === "DELETE") {
       const session = await resolveSession(deps, config, headers.authorization);
@@ -430,6 +459,17 @@ export async function handleAuth(
       }
       // Gate passed; the actual GoTrue deletion is server-only
       // (admin API + service_role key, never wired here).
+      // Audit the REQUEST before the throw: a user who reaches
+      // this point asked for deletion and passed the aal gate —
+      // that fact must survive even though the deletion itself
+      // is not completed by this codebase.
+      auditLog({
+        requestId,
+        userId: session.user.id,
+        action: "auth.account_deletion_requested",
+        target: "self",
+        appEnv,
+      });
       deleteAccountServerOnly();
       // Unreachable by construction (deleteAccountServerOnly throws).
       outcome = wrap(empty(204), session.user.id);

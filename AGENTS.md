@@ -231,6 +231,24 @@ max-age=600` on static assets only, API stays no-store;
   thresholds, runbooks, incident process). Tests 186/186
   (`tests/observability.test.ts`, 15 new). See
   docs/decisions/0016-hosting-observability.md.
+- 0017 Final layer (load/cost + Layer 16) — written in code, NOT
+  pushed: `src/lib/audit.ts` id-only audit trail in the log
+  stream (MFA enroll/unenroll, password change, deletion
+  request, block/unblock, mute/unmute, report; target is an id
+  or "self", never content); `scripts/load-test.mjs` zero-dep
+  load script — measured ~1,700–1,900 req/s, p95 < 35 ms
+  single-process localhost, rate limiter (not CPU) the binding
+  constraint; `docs/cost-at-scale.md` (₹0 breaks first at
+  Supabase egress ~10k MAU; Netlify free is credit-based for
+  new accounts — verify in dashboard); `docs/disaster-recovery.md`
+  (no auto backups on free tier — weekly manual dump; restore
+  untested); `docs/legal/` drafts (not lawyer-reviewed; age +
+  governing law undecided); `docs/moderation.md` (queue is
+  future; anonymous control undecided); `docs/pre-launch-checklist.md`.
+  Tests 196/196 (`tests/final-layer.test.ts`, 10 new). See
+  docs/decisions/0017-final-layer.md. **Playbook build complete
+  after this layer** — remaining work is the owner's dashboard
+  steps + undecided items in the pre-launch checklist.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.

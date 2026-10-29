@@ -41,6 +41,7 @@ import {
 } from "../lib/http.js";
 import { corsHeaders } from "../lib/cors.js";
 import { logRequest, newRequestId, SECURITY_HEADERS } from "../lib/log.js";
+import { auditLog, type AuditAction } from "../lib/audit.js";
 import { reportError } from "../lib/errors.js";
 import { bucketForApiRoute, hashKeyPart, type RateLimiter } from "../lib/rateLimit.js";
 import { decodeCursor, parseLimit } from "../lib/pagination.js";
@@ -226,6 +227,7 @@ export async function handleApi(
       headers,
       bodyText,
       deps,
+      requestId,
     );
     logRequest({
       requestId,
@@ -320,6 +322,7 @@ async function dispatch(
   headers: { authorization?: string | null },
   bodyText: string | null,
   deps: ApiDeps,
+  requestId: string,
 ): Promise<{ result: ApiResult; userId: string | null }> {
   // segments[0] is "api" (enforced by the caller in app.ts).
   const rest = segments.slice(1);
@@ -327,6 +330,23 @@ async function dispatch(
     throw new ApiError(404, "NOT_FOUND", "Not found");
   }
   const caller = await resolveCaller(deps, headers.authorization);
+  // Final layer — audit trail for sensitive actions. The helper
+  // no-ops when there is no authenticated caller (every audited
+  // route requires one anyway via requireUser in the service).
+  // `target` is an id or "self", never user content — muted
+  // topics/words audit with target null because the topic/word
+  // text itself is content and must not reach the logs.
+  const audit = (action: AuditAction, target: string | null): void => {
+    if (caller.user !== null) {
+      auditLog({
+        requestId,
+        userId: caller.user.id,
+        action,
+        target,
+        appEnv: deps.appEnv ?? "unknown",
+      });
+    }
+  };
   // Layer 11: after the route-table 404 and after caller
   // resolution (so a presented-but-rejected token is 401, not
   // 429), before any store call. Key by user id when a session
@@ -649,10 +669,14 @@ async function dispatch(
       throw new ApiError(400, "VALIDATION_ERROR", "topic must be a string");
     }
     await api2.muteTopic(store, ctx, topic);
+    // Audit with target null: the topic text is user content and
+    // must never reach the logs — only the fact of the mute.
+    audit("moderation.mute_topic", null);
     return wrap(empty(204));
   }
   if (rest[0] === "muted-topics" && rest.length === 2 && method === "DELETE") {
     await api2.unmuteTopic(store, ctx, decodeURIComponent(rest[1] as string));
+    audit("moderation.unmute_topic", null);
     return wrap(empty(204));
   }
   if (rest[0] === "muted-words" && rest.length === 1 && method === "GET") {
@@ -667,10 +691,12 @@ async function dispatch(
       throw new ApiError(400, "VALIDATION_ERROR", "word must be a string");
     }
     await api2.muteWord(store, ctx, word);
+    audit("moderation.mute_word", null);
     return wrap(empty(204));
   }
   if (rest[0] === "muted-words" && rest.length === 2 && method === "DELETE") {
     await api2.unmuteWord(store, ctx, decodeURIComponent(rest[1] as string));
+    audit("moderation.unmute_word", null);
     return wrap(empty(204));
   }
 
@@ -686,11 +712,18 @@ async function dispatch(
     if (typeof blockedId !== "string") {
       throw new ApiError(400, "VALIDATION_ERROR", "blocked_id must be a string");
     }
-    await api2.block(store, ctx, requireUuid(blockedId));
+    const blockedUuid = requireUuid(blockedId);
+    await api2.block(store, ctx, blockedUuid);
+    // Audit with the blocked user's id (an identifier, not
+    // content) — who blocked whom is exactly what a safety
+    // audit trail needs to answer.
+    audit("moderation.block", blockedUuid);
     return wrap(empty(204));
   }
   if (rest[0] === "blocks" && rest.length === 2 && method === "DELETE") {
-    await api2.unblock(store, ctx, requireUuid(rest[1] as string));
+    const unblockedUuid = requireUuid(rest[1] as string);
+    await api2.unblock(store, ctx, unblockedUuid);
+    audit("moderation.unblock", unblockedUuid);
     return wrap(empty(204));
   }
 
@@ -701,6 +734,9 @@ async function dispatch(
   }
   if (rest[0] === "reports" && rest.length === 1 && method === "POST") {
     const report = await api2.createReport(store, ctx, body());
+    // Audit with the report's id only — the reason text is user
+    // content and is deliberately not recorded here.
+    audit("moderation.report", report.id);
     return wrap(json(201, report));
   }
   if (rest[0] === "reports" && rest.length === 2 && method === "GET") {
