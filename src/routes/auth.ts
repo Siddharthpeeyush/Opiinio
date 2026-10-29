@@ -26,13 +26,15 @@
  *   returned once, to the enrolling user only, and the frontend
  *   must discard them after verification (never store/log them).
  * - CORS: same-origin / APP_ORIGIN only, never "*" (Layer 5).
- * - Rate-limit hook: Layer 11 owns the shared store; these
- *   routes call an optional deps.rateLimit hook before GoTrue
- *   on signup / signin / reset / refresh / Google start /
- *   MFA challenge / MFA verify / password change / account
- *   deletion, so the limiter can wrap them without a rewrite.
- *   The default (no hook) is no limiting — recorded honestly
- *   in docs/decisions/0011-server-auth-routes.md, not hidden.
+ * - Rate limits (Layer 11): these routes call deps.rateLimit
+ *   before GoTrue on signup / signin / reset / refresh /
+ *   Google start / MFA enroll / challenge / verify / session /
+ *   factors / password change / account deletion. The
+ *   production adapter (app.ts + server.ts) backs the hook
+ *   with the shared in-memory limiter (src/lib/rateLimit.ts);
+ *   a call with no hook supplied is un-limited only in tests.
+ *   Sign-out is deliberately un-limited: blocking sign-out
+ *   would trap a user in a session.
  * - Account deletion: aal-gated, then SERVER_ONLY (see
  *   authService.deleteAccountServerOnly) — GoTrue admin
  *   deletion needs the service_role key, which is never wired
@@ -59,6 +61,7 @@ import {
 } from "../lib/http.js";
 import { corsHeaders } from "../lib/cors.js";
 import { logRequest, newRequestId, SECURITY_HEADERS } from "../lib/log.js";
+import { hashKeyPart } from "../lib/rateLimit.js";
 import { hasVerifiedTotpFactor, listFactors, unenrollTotp } from "../lib/mfa.js";
 import { enrollTotp, challengeTotp } from "../lib/mfa.js";
 import { mayPerformSensitiveAction, readAalFromVerifiedToken } from "../lib/mfa.js";
@@ -82,8 +85,14 @@ export interface AuthDeps {
   verify?: (token: string, config: AuthConfig) => Promise<AuthUser | null>;
   /** Injected for tests; production uses env. */
   config?: AuthConfig;
-  /** Rate-limit hook (Layer 11 owns the store); no-op by default. */
-  rateLimit?: (routePattern: string) => Promise<void>;
+  /**
+   * Rate-limit hook (Layer 11). The handler supplies the key
+   * (hashed email or "user:<id>"); the production adapter in
+   * app.ts adds the hashed-IP key for strict routes. A hook that
+   * is not supplied means no limiting (test isolation only —
+   * server.ts always supplies one). Throws a generic 429.
+   */
+  rateLimit?: (routePattern: string, key?: string) => Promise<void>;
   appOrigin?: string;
 }
 
@@ -110,9 +119,13 @@ function empty(statusCode: number, extra: Record<string, string> = {}): AuthResu
 }
 
 function fail(error: ApiError, extra: Record<string, string> = {}): AuthResult {
+  const retry: Record<string, string> =
+    error.retryAfterSeconds !== undefined
+      ? { "retry-after": String(error.retryAfterSeconds) }
+      : {};
   return {
     statusCode: error.status,
-    headers: { ...SECURITY_HEADERS, ...extra },
+    headers: { ...SECURITY_HEADERS, ...retry, ...extra },
     body: errorBody(error),
   };
 }
@@ -238,11 +251,14 @@ export async function handleAuth(
     }
     const config = resolveConfig(deps);
     const fetchImpl: GoTrueFetch = deps.fetchImpl ?? (fetch as unknown as GoTrueFetch);
-    const limit = async (routePattern: string): Promise<void> => {
+    const limit = async (routePattern: string, key?: string): Promise<void> => {
       if (deps.rateLimit !== undefined) {
-        await deps.rateLimit(routePattern);
+        await deps.rateLimit(routePattern, key);
       }
     };
+    const emailKey = (email: unknown): string =>
+      `email:${hashKeyPart(typeof email === "string" ? email.trim().toLowerCase() : "")}`;
+    const userKey = (userId: string): string => `user:${userId}`;
     const body = (): Record<string, unknown> => parseJsonBody(bodyText);
     const wrap = (
       result: AuthResult,
@@ -253,9 +269,9 @@ export async function handleAuth(
     let outcome: { result: AuthResult; userId: string | null };
 
     if (tail[0] === "signup" && method === "POST") {
-      await limit(pattern);
       const signupBody = body();
       assertAllowedKeys(signupBody, ["email", "password"]);
+      await limit(pattern, emailKey(signupBody.email));
       const result = await signUp(
         config,
         signupBody.email,
@@ -264,9 +280,9 @@ export async function handleAuth(
       );
       outcome = wrap(json(200, result), result.user.id);
     } else if (tail[0] === "signin" && method === "POST") {
-      await limit(pattern);
       const signinBody = body();
       assertAllowedKeys(signinBody, ["email", "password"]);
+      await limit(pattern, emailKey(signinBody.email));
       const result = await signIn(
         config,
         signinBody.email,
@@ -279,9 +295,9 @@ export async function handleAuth(
       await signOut(config, session.token, fetchImpl);
       outcome = wrap(json(200, { signedOut: true }), session.user.id);
     } else if (tail[0] === "reset" && method === "POST") {
-      await limit(pattern);
       const resetBody = body();
       assertAllowedKeys(resetBody, ["email"]);
+      await limit(pattern, emailKey(resetBody.email));
       const result = await requestPasswordReset(config, resetBody.email, fetchImpl);
       outcome = wrap(json(200, result), null);
     } else if (tail[0] === "refresh" && method === "POST") {
@@ -292,6 +308,7 @@ export async function handleAuth(
       outcome = wrap(json(200, result), result.user.id);
     } else if (tail[0] === "session" && method === "GET") {
       const session = await resolveSession(deps, config, headers.authorization);
+      await limit(pattern, userKey(session.user.id));
       const aal = readAalFromVerifiedToken(session.token).aal;
       outcome = wrap(json(200, { user: session.user, aal }), session.user.id);
     } else if (tail[0] === "google" && method === "GET") {
@@ -299,6 +316,7 @@ export async function handleAuth(
       outcome = wrap(json(200, { url: googleStartUrl(config) }), null);
     } else if (tail[0] === "mfa" && tail[1] === "enroll" && method === "POST") {
       const session = await resolveSession(deps, config, headers.authorization);
+      await limit(pattern, userKey(session.user.id));
       const enrollBody = body();
       assertAllowedKeys(enrollBody, ["friendly_name"]);
       const friendlyName =
@@ -313,8 +331,8 @@ export async function handleAuth(
       // The frontend must discard them after verification.
       outcome = wrap(json(201, enrollment), session.user.id);
     } else if (tail[0] === "mfa" && tail[1] === "challenge" && method === "POST") {
-      await limit(pattern);
       const session = await resolveSession(deps, config, headers.authorization);
+      await limit(pattern, userKey(session.user.id));
       const challengeBody = body();
       assertAllowedKeys(challengeBody, ["factor_id"]);
       const challengeId = await challengeTotp(
@@ -328,8 +346,8 @@ export async function handleAuth(
       }
       outcome = wrap(json(200, { challengeId }), session.user.id);
     } else if (tail[0] === "mfa" && tail[1] === "verify" && method === "POST") {
-      await limit(pattern);
       const session = await resolveSession(deps, config, headers.authorization);
+      await limit(pattern, userKey(session.user.id));
       const verifyBody = body();
       assertAllowedKeys(verifyBody, ["factor_id", "challenge_id", "code"]);
       const result = await verifyMfaWithSession(
@@ -343,6 +361,7 @@ export async function handleAuth(
       outcome = wrap(json(200, result), session.user.id);
     } else if (tail[0] === "mfa" && tail[1] === "factors" && method === "GET") {
       const session = await resolveSession(deps, config, headers.authorization);
+      await limit(pattern, userKey(session.user.id));
       const factors = await listFactors(config, session.token, fetchImpl);
       // Own factors only, no secrets: listFactors returns id /
       // friendly name / type / status, never a secret or code.
@@ -353,8 +372,8 @@ export async function handleAuth(
       tail.length === 3 &&
       method === "DELETE"
     ) {
-      await limit(pattern);
       const session = await resolveSession(deps, config, headers.authorization);
+      await limit(pattern, userKey(session.user.id));
       const factorId = tail[2] as string;
       const factors = await listFactors(config, session.token, fetchImpl);
       const hasFactor = hasVerifiedTotpFactor(factors);
@@ -368,8 +387,8 @@ export async function handleAuth(
       }
       outcome = wrap(empty(204), session.user.id);
     } else if (tail[0] === "password" && method === "PATCH") {
-      await limit(pattern);
       const session = await resolveSession(deps, config, headers.authorization);
+      await limit(pattern, userKey(session.user.id));
       const factors = await listFactors(config, session.token, fetchImpl);
       const hasFactor = hasVerifiedTotpFactor(factors);
       const aal = readAalFromVerifiedToken(session.token).aal;
@@ -388,8 +407,8 @@ export async function handleAuth(
       );
       outcome = wrap(json(200, result), session.user.id);
     } else if (tail[0] === "account" && method === "DELETE") {
-      await limit(pattern);
       const session = await resolveSession(deps, config, headers.authorization);
+      await limit(pattern, userKey(session.user.id));
       const factors = await listFactors(config, session.token, fetchImpl);
       const hasFactor = hasVerifiedTotpFactor(factors);
       const aal = readAalFromVerifiedToken(session.token).aal;

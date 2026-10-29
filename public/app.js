@@ -3778,7 +3778,34 @@
       return;
     }
     if (action === "reply-like") {
-      showToast("Preview only — reply likes are local in preview and are not saved.");
+      if (isPreview()) {
+        showToast("Preview only — reply likes are local in preview and are not saved.");
+        return;
+      }
+      // Live mode (Layer 11 fix): call the live like endpoint.
+      // The endpoint returns 204 with no body, so the count is
+      // refreshed from the server by re-rendering (route()
+      // refetches the post) — never adjusted locally from a
+      // guessed count. On failure, toast the generic error and
+      // still re-render so the displayed state stays server-true.
+      var replyId = target.getAttribute("data-reply");
+      var liveReply = (state.livePostReplies || []).find(function (r) {
+        return r && r.id === replyId;
+      });
+      (async function () {
+        try {
+          await api("/replies/" + replyId + "/like", {
+            method: liveReply && liveReply.ownLiked ? "DELETE" : "POST",
+          });
+        } catch (err) {
+          showToast(
+            err.status === 401
+              ? "Sign in required to like."
+              : "Could not save your like.",
+          );
+        }
+        route();
+      })();
       return;
     }
     handleAction(e);

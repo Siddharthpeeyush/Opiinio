@@ -177,6 +177,23 @@ include timeouts and component-level status (skill: operate-and-scale).
   deletion is aal-gated but SERVER_ONLY in this layer (GoTrue
   admin deletion needs a service_role key that is never wired
   here).
+- 0013 Layer 11 rate limits + live reply-like fix — written in
+  code, NOT pushed, no live Supabase call: `src/lib/rateLimit.ts`
+  (fixed-window, in-memory store behind a `RateLimitStore`
+  interface so Redis/Upstash can replace it for multi-instance
+  later), buckets authStrict 5/15min / authGeneral 20/15min /
+  write 60/5min / read 300/5min / search 60/5min, keyed by user
+  id first and SHA-256-hashed IP only as fallback (strict auth
+  routes dual-key hashed email + hashed IP), generic 429 with
+  `Retry-After` and no personal data or enumeration signal,
+  wired through `route()` (the deployed path) into both route
+  families; sign-out deliberately unlimited; the 0012 reply-like
+  branch now calls POST/DELETE `/replies/:id/like` in live mode
+  and refetches via `route()`, preview toast unchanged. Tests
+  154/154 (`tests/rate-limit.test.ts`, 19 new). Shared-store
+  replacement, production tuning, and trusted-proxy handling are
+  recorded follow-ups; see
+  docs/decisions/0013-rate-limits.md.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.

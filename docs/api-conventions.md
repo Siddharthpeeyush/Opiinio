@@ -28,8 +28,11 @@ Codes: `VALIDATION_ERROR` (400), `UNAUTHENTICATED` (401),
 `FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409),
 `PAYLOAD_TOO_LARGE` (413), `INTERNAL_ERROR` (500),
 `SERVICE_UNAVAILABLE` (503), `SERVER_ONLY` (403, server-only
-tables). Messages are generic: no SQL, no GoTrue raw errors, no
-stack traces, no internal paths, no tokens. A 500 body is always
+tables), `RATE_LIMITED` (429, Layer 11: body
+`{"error":{"code":"RATE_LIMITED","message":"Too many attempts, try again later"}}`
+plus a `Retry-After` header in seconds). Messages are generic: no SQL,
+no GoTrue raw errors, no stack traces, no internal paths, no tokens.
+A 500 body is always
 exactly `{"error":{"code":"INTERNAL_ERROR","message":"Internal error"}}`.
 
 ## Status rules (playbook + privacy)

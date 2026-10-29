@@ -11,12 +11,15 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** Seconds until retry, for 429 only. Never personal data. */
+  readonly retryAfterSeconds?: number;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, retryAfterSeconds?: number) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 

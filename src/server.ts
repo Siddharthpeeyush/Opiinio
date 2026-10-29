@@ -7,8 +7,13 @@
 import { createServer } from "node:http";
 import { route } from "./app.js";
 import { loadEnv } from "./lib/env.js";
+import { createDefaultRateLimiter } from "./lib/rateLimit.js";
 
 const env = loadEnv();
+// Layer 11: one shared in-memory limiter for this process.
+// Multi-instance deploys need the shared-store follow-up in
+// decision 0013; a single instance is the V1 launch shape.
+const rateLimiter = createDefaultRateLimiter();
 
 async function readBody(req: import("node:http").IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
@@ -43,6 +48,10 @@ async function handleRequest(
         origin: req.headers.origin ?? null,
       },
       bodyText,
+      rateLimiter,
+      // Direct socket address only — X-Forwarded-For is spoofable
+      // and is never trusted here (see decision 0013).
+      clientIp: req.socket.remoteAddress ?? null,
     });
     // Security headers on every response; API routes add their own
     // (CORS, no-store) on top. Node never sets X-Powered-By here.

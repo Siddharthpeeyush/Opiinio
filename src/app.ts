@@ -10,6 +10,12 @@ import { handleHealth, handleLive } from "./routes/health.js";
 import { handleApi, type ApiDeps } from "./routes/api.js";
 import { handleAuth, type AuthDeps } from "./routes/auth.js";
 import { SECURITY_HEADERS } from "./lib/log.js";
+import {
+  createDefaultRateLimiter,
+  hashKeyPart,
+  isAuthStrictRoute,
+  type RateLimiter,
+} from "./lib/rateLimit.js";
 
 export interface RouteResult {
   statusCode: number;
@@ -23,6 +29,10 @@ export interface RouteOptions {
   bodyText?: string | null;
   apiDeps?: ApiDeps;
   authDeps?: AuthDeps;
+  /** Shared Layer 11 limiter; server.ts supplies one, tests may inject. */
+  rateLimiter?: RateLimiter;
+  /** Direct socket address from server.ts; hashed before keying. */
+  clientIp?: string | null;
 }
 
 // The server always runs from dist/ (see package.json scripts), so
@@ -31,12 +41,43 @@ export interface RouteOptions {
 // the bug that made GET / fail in tests (it pointed at dist/public).
 const PUBLIC_DIR = join(import.meta.dirname, "..", "..", "public");
 
+// Layer 11: one shared in-memory limiter for the deployed server.
+// route() is the only path server.ts uses, so this is where the
+// default no-op hook is replaced by real enforcement. Direct
+// handleAuth / handleApi calls without injected deps stay
+// un-limited (test isolation); that is documented, not hidden.
+let sharedRateLimiter: RateLimiter | null = null;
+
+function defaultRateLimiter(): RateLimiter {
+  if (sharedRateLimiter === null) {
+    sharedRateLimiter = createDefaultRateLimiter();
+  }
+  return sharedRateLimiter;
+}
+
 export async function route(
   method: string,
   pathname: string,
   env: EnvConfig,
   opts: RouteOptions = {},
 ): Promise<RouteResult> {
+  const limiter = opts.rateLimiter ?? defaultRateLimiter();
+  const ipKey = `ip:${hashKeyPart(opts.clientIp ?? "unknown")}`;
+  // Production auth adapter: the handler supplies a hashed-email
+  // or user-id key; strict routes additionally check the IP key,
+  // and key-less routes (refresh, Google start) check IP only.
+  const authRateLimit =
+    opts.authDeps?.rateLimit ??
+    (async (pattern: string, key?: string): Promise<void> => {
+      const keys: string[] = [];
+      if (key !== undefined) {
+        keys.push(key);
+      }
+      if (key === undefined || isAuthStrictRoute(pattern)) {
+        keys.push(ipKey);
+      }
+      await limiter.checkAuthRoute(pattern, keys);
+    });
   // Server auth routes (the /api/auth/* layer). Dispatched before
   // the generic API routes
   // so auth has its own route table, CORS, and logging — and so
@@ -50,7 +91,11 @@ export async function route(
         origin: opts.headers?.origin ?? null,
       },
       opts.bodyText ?? null,
-      { ...opts.authDeps, appOrigin: opts.authDeps?.appOrigin ?? env.appOrigin },
+      {
+        ...opts.authDeps,
+        rateLimit: authRateLimit,
+        appOrigin: opts.authDeps?.appOrigin ?? env.appOrigin,
+      },
     );
     return {
       statusCode: result.statusCode,
@@ -74,7 +119,12 @@ export async function route(
         origin: opts.headers?.origin ?? null,
       },
       opts.bodyText ?? null,
-      { ...opts.apiDeps, appOrigin: opts.apiDeps?.appOrigin ?? env.appOrigin },
+      {
+        ...opts.apiDeps,
+        rateLimiter: opts.apiDeps?.rateLimiter ?? limiter,
+        clientIp: opts.apiDeps?.clientIp ?? opts.clientIp ?? null,
+        appOrigin: opts.apiDeps?.appOrigin ?? env.appOrigin,
+      },
     );
     return {
       statusCode: result.statusCode,

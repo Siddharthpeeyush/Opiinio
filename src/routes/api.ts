@@ -41,6 +41,7 @@ import {
 } from "../lib/http.js";
 import { corsHeaders } from "../lib/cors.js";
 import { logRequest, newRequestId, SECURITY_HEADERS } from "../lib/log.js";
+import { bucketForApiRoute, hashKeyPart, type RateLimiter } from "../lib/rateLimit.js";
 import { decodeCursor, parseLimit } from "../lib/pagination.js";
 import { isUuid } from "../lib/validation.js";
 import { RestStore, type Store } from "../db/store.js";
@@ -52,6 +53,10 @@ export interface ApiDeps {
   verify?: (token: string | null, config: AuthConfig) => Promise<AuthUser | null>;
   store?: (token: string | null) => Store;
   appOrigin?: string;
+  /** Layer 11 limiter; absent means un-limited (test isolation only). */
+  rateLimiter?: RateLimiter;
+  /** Direct socket address from server.ts, hashed before keying. */
+  clientIp?: string | null;
 }
 
 export interface ApiResult {
@@ -88,9 +93,13 @@ function empty(statusCode: number, extra: Record<string, string> = {}): ApiResul
 }
 
 function fail(error: ApiError, extra: Record<string, string> = {}): ApiResult {
+  const retry: Record<string, string> =
+    error.retryAfterSeconds !== undefined
+      ? { "retry-after": String(error.retryAfterSeconds) }
+      : {};
   return {
     statusCode: error.status,
-    headers: { ...SECURITY_HEADERS, ...extra },
+    headers: { ...SECURITY_HEADERS, ...retry, ...extra },
     body: errorBody(error),
   };
 }
@@ -282,6 +291,20 @@ async function dispatch(
     throw new ApiError(404, "NOT_FOUND", "Not found");
   }
   const caller = await resolveCaller(deps, headers.authorization);
+  // Layer 11: after the route-table 404 and after caller
+  // resolution (so a presented-but-rejected token is 401, not
+  // 429), before any store call. Key by user id when a session
+  // exists, otherwise by hashed IP — never the raw IP.
+  if (deps.rateLimiter !== undefined) {
+    const key =
+      caller.user !== null
+        ? `user:${caller.user.id}`
+        : `ip:${hashKeyPart(deps.clientIp ?? "unknown")}`;
+    await deps.rateLimiter.check(
+      bucketForApiRoute(method, rest, query.has("search")),
+      key,
+    );
+  }
   const store = makeStore(deps, caller.token);
   const ctx: api.Caller = { user: caller.user };
   const userId = caller.user?.id ?? null;
