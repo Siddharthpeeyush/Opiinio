@@ -107,6 +107,10 @@ include timeouts and component-level status (skill: operate-and-scale).
   in code, providers not yet enabled live.
 - 0009 Layer 5 APIs (validated, privacy-first, hidden) — written
   in code, no live Supabase call, frontend not yet built.
+- 0010 Layer 6 frontend (editorial single-page app, /api-only,
+  labelled preview mode) — written in code, sign-in/MFA
+  end-to-end NOT yet live (no /api/auth route, providers not
+  enabled live); see docs/decisions/0010-layer6-frontend.md.
 
 ## What this repo is NOT
 
@@ -116,11 +120,12 @@ include timeouts and component-level status (skill: operate-and-scale).
 - It is NOT the old checklist folder (`~/workspace/opineo/`), which
   still says Opineo / Liquid Glass. That folder is untouched by this
   scaffold and is superseded by this repo's docs for name and look.
-- Auth, database migrations, and feature APIs exist now (Layers 3–5,
-  see `docs/decisions/0007-layer3-database.md`,
-  `docs/decisions/0008-layer4-auth.md`, and
-  `docs/decisions/0009-layer5-apis-privacy.md`); the frontend is
-  the next layer (Layer 6+).
+- Auth, database migrations, feature APIs, and the frontend exist
+  now (Layers 3–6, see `docs/decisions/0007-layer3-database.md`,
+  `docs/decisions/0008-layer4-auth.md`,
+  `docs/decisions/0009-layer5-apis-privacy.md`, and
+  `docs/decisions/0010-layer6-frontend.md`); live sign-in/MFA and
+  live data are the next steps (Layers 7+ plus dashboard steps).
 
 ## Open questions (user to confirm)
 
@@ -139,8 +144,13 @@ include timeouts and component-level status (skill: operate-and-scale).
   enabled live; see `AUTH-SETUP-GUIDE.md`. Layer 5 (APIs) is
   written in code (`src/services/api.ts`, `api2.ts`,
   `src/routes/api.ts`, `docs/api-conventions.md`) but has made
-  no live Supabase call and has no frontend yet; see
+  no live Supabase call; see
   `docs/decisions/0009-layer5-apis-privacy.md` for its gaps.
+  Layer 6 (frontend, `public/index.html`, `public/app.js`,
+  `public/styles.css`) is written in code but sign-in/MFA
+  end-to-end is NOT live (no /api/auth route yet, providers not
+  enabled live) and no live visual 390px/1440px check has been
+  run; see `docs/decisions/0010-layer6-frontend.md`.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.

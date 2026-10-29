@@ -3,39 +3,68 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Opiinio — EVERY OPINION MATTERS. Text-only opinions, replies, debates and polls. No photos, no videos."
+    />
+    <meta name="color-scheme" content="light" />
     <title>Opiinio — EVERY OPINION MATTERS</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="page">
-      <p class="eyebrow">Opiinio · Text only · 280 characters</p>
-      <h1>Opiinio</h1>
-      <p class="tagline">EVERY OPINION MATTERS</p>
-      <p class="lede">
-        Share your opinion. Hear others. Decide together. No photos, no videos — words
-        only.
-      </p>
-      <section class="card card--teal" aria-label="Example opinion">
-        <p class="card-text">Remote work should be the default, not the exception.</p>
-        <p class="meter">
-          <span>Agree 62%</span><span aria-hidden="true">⚖️</span
-          ><span>Disagree 38%</span>
-        </p>
-      </section>
-      <section class="card card--coral" aria-label="Scaffold status">
-        <p class="card-text">This is the real-product scaffold.</p>
-        <p>
-          Health check: <code>/api/health</code> · Liveness:
-          <code>/api/health/live</code>
-        </p>
-        <p>
-          No accounts, database, or feature endpoints exist yet — those are the next
-          layers, after this scaffold report.
-        </p>
-      </section>
-      <footer>
-        <p>Opiinio scaffold v0.1.0 · Editorial paper look · ₹0 launch</p>
-      </footer>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="wordmark" href="#/welcome" aria-label="Opiinio home">
+          <span class="wordmark-bubble" aria-hidden="true">💬</span>
+          <span>Opiinio</span>
+        </a>
+        <p class="tagline" data-i18n="tagline">EVERY OPINION MATTERS</p>
+        <nav class="topnav" aria-label="Main navigation">
+          <a href="#/feed" data-i18n="navFeed">Feed</a>
+          <a href="#/explore" data-i18n="navExplore">Explore</a>
+          <a href="#/debates" data-i18n="navDebates">Debates</a>
+          <a href="#/notifications" data-i18n="navNotifications">Notifications</a>
+          <a href="#/compose" data-i18n="navCompose">Compose</a>
+          <a href="#/settings" data-i18n="navSettings">Settings</a>
+        </nav>
+        <div class="header-actions">
+          <button type="button" id="lang-toggle" aria-label="Switch interface language">
+            EN / हिंदी
+          </button>
+          <a class="button button--small" href="#/signin" data-i18n="navSignIn"
+            >Sign in</a
+          >
+        </div>
+      </div>
+    </header>
+    <div id="mode-banner" class="mode-banner" role="status" aria-live="polite"></div>
+    <main id="main" class="page" tabindex="-1">
+      <div id="app" aria-live="polite">
+        <p class="skeleton" aria-label="Loading">Loading Opiinio…</p>
+      </div>
     </main>
+    <div
+      id="toast"
+      class="toast"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    ></div>
+    <footer class="site-footer">
+      <p>
+        Opiinio · Text only · 280 characters · Initials-only avatars · No photo or video
+        uploads
+      </p>
+      <p>
+        Language toggle changes buttons and headings only — other people's posts are never
+        translated.
+      </p>
+      <p>
+        No API documentation is linked here, by design: the API is not a public product
+        surface.
+      </p>
+    </footer>
+    <script src="/app.js"></script>
   </body>
 </html>

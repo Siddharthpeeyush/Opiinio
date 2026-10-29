@@ -83,6 +83,12 @@ export async function route(
     const css = await readFile(join(PUBLIC_DIR, "styles.css"), "utf8");
     return { statusCode: 200, contentType: "text/css", body: css };
   }
+  if (method === "GET" && pathname === "/app.js") {
+    // Layer 6 frontend. Same-origin script only; it fetches /api/*
+    // and nothing else (see public/app.js header + frontend tests).
+    const js = await readFile(join(PUBLIC_DIR, "app.js"), "utf8");
+    return { statusCode: 200, contentType: "text/javascript", body: js };
+  }
   return {
     statusCode: 404,
     contentType: "application/json",
