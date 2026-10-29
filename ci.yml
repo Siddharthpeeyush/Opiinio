@@ -1,0 +1,60 @@
+# Opiinio CI — Layers 7-8.
+#
+# Runs on every pull request and every push to main: install, secret
+# scan, typecheck, lint, format check, tests. Fails fast.
+#
+# VALIDATION STATUS (honest): this file is validated structurally only
+# (YAML parses; steps match package.json scripts). It has NOT yet been
+# run by GitHub Actions — pushes to GitHub go through the user's GitHub
+# connector approval flow, not from this codebase, so no live Actions
+# run exists yet. See docs/decisions/0014-ci-cd-testing.md.
+#
+# DEPLOY FLOW (guidance, not wired — no Netlify API tokens or deploy
+# keys are stored anywhere in this repo):
+# - Pull requests: Netlify Deploy Previews are automatic once the user
+#   connects this repo to Netlify (his own dashboard, his own login).
+# - Merge to main: auto-deploys the staging build.
+# - Production: MANUAL. The user publishes a deploy from the Netlify
+#   dashboard. Rollback = re-publish the previous good deploy
+#   (runbook in docs/decisions/0014-ci-cd-testing.md).
+#
+# Node version: pinned to 24, matching the stack decision
+# (AGENTS.md: Node.js 24, TypeScript strict).
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Secret scan
+        run: node scripts/scan-secrets.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Tests
+        run: npm test
