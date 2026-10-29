@@ -194,6 +194,18 @@ include timeouts and component-level status (skill: operate-and-scale).
   replacement, production tuning, and trusted-proxy handling are
   recorded follow-ups; see
   docs/decisions/0013-rate-limits.md.
+- 0014 Layers 7–8 CI/CD + test strategy — written in code, NOT
+  pushed: `scripts/scan-secrets.mjs` (zero-dep scanner; clean on
+  the tree, catches planted fakes, never echoes values),
+  `.github/workflows/ci.yml` (Node 24 pinned; npm ci → scan →
+  typecheck → lint → format:check → test on PR + push to main;
+  validated structurally only, no live Actions run yet),
+  `docs/testing-strategy.md` (bug-first rule, 401/403/404 matrix,
+  owed E2E/load/a11y), `CHANGELOG.md` (new, Unreleased section),
+  staging-auto / prod-manual guidance + rollback runbook in the
+  decision record; no Netlify tokens/keys wired. Tests 159/159
+  (`tests/secret-scanner.test.ts`, 5 new). See
+  docs/decisions/0014-ci-cd-testing.md.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.
