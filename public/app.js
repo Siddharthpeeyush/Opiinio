@@ -426,6 +426,30 @@
     notifications: SAMPLE_NOTIFICATIONS.map(function (n) {
       return Object.assign({}, n);
     }),
+    // Live-list pass (Layer 12 in spirit, see decision 0012):
+    // live data fetched from /api/* only. Null means "not loaded
+    // yet"; an empty array means "loaded, nothing there". Sample
+    // data is never copied into these fields.
+    liveFeedItems: [],
+    liveFeedCursor: null,
+    liveFeedKey: null,
+    liveFeedError: null,
+    liveNotifications: null,
+    liveNotificationsCursor: null,
+    liveNotificationsError: null,
+    liveProfile: null,
+    liveProfileId: null,
+    liveProfileTab: null,
+    liveProfileTabItems: null,
+    liveProfileTabCursor: null,
+    liveProfileError: null,
+    livePinnedOpinion: null,
+    livePost: null,
+    livePostReplies: null,
+    livePostError: null,
+    liveDaily: null,
+    liveMore: null,
+    skipLiveRefetch: false,
   };
 
   function isPreview() {
@@ -443,6 +467,429 @@
     return list.filter(function (o) {
       return !isHidden(o);
     });
+  }
+
+  /* ---------------- live lists (same-origin /api only) ---------------- */
+
+  function isLive() {
+    return state.mode === "live";
+  }
+
+  function dedupeById(items) {
+    var seen = {};
+    var out = [];
+    items.forEach(function (item) {
+      if (!item || seen[item.id]) return;
+      seen[item.id] = true;
+      out.push(item);
+    });
+    return out;
+  }
+
+  function liveOpinionById(id) {
+    var pools = [state.liveFeedItems, state.livePost ? [state.livePost] : []];
+    if (Array.isArray(state.liveProfileTabItems)) pools.push(state.liveProfileTabItems);
+    for (var i = 0; i < pools.length; i++) {
+      var found = (pools[i] || []).find(function (o) {
+        return o && o.id === id;
+      });
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function toLiveOpinion(item) {
+    // Server OpinionView already matches the card shape (author
+    // with authorId/handle/displayName/initials, counts, own
+    // stance/like). Normalise only the fields the card reads so
+    // a missing field renders as zero/empty, never undefined.
+    return {
+      id: item.id,
+      body: item.body || "",
+      topic: item.topic || "",
+      isAnonymous: item.isAnonymous === true,
+      author: item.author || {
+        authorId: null,
+        handle: "Anonymous",
+        displayName: "Anonymous",
+        initials: "AN",
+      },
+      agreeCount: item.agreeCount || 0,
+      neutralCount: item.neutralCount || 0,
+      disagreeCount: item.disagreeCount || 0,
+      likeCount: item.likeCount || 0,
+      repostCount: item.repostCount || 0,
+      replyCount: item.replyCount || 0,
+      ownStance: item.ownStance || null,
+      ownLiked: item.ownLiked === true,
+      dailyQuestionId: item.dailyQuestionId || null,
+      createdAt: item.createdAt || "",
+      poll: item.poll || null,
+      replies: item.replies || [],
+    };
+  }
+
+  function toLiveRepost(item) {
+    return {
+      id: item.id,
+      opinionId: item.opinionId,
+      quoteTake: item.quoteTake || null,
+      repostedBy: item.repostedBy || null,
+      original: item.original ? toLiveOpinion(item.original) : null,
+      createdAt: item.createdAt || "",
+    };
+  }
+
+  // Live fetch with the task's error contract:
+  // 401 on a private call -> clear the stale session, caller
+  // shows the auth-required state (never sample as live).
+  // 401 on a public call -> clear, retry once without a token.
+  // 503 / network -> fall back to labelled preview mode.
+  async function liveFetch(path, opts) {
+    opts = opts || {};
+    try {
+      return await api(path);
+    } catch (e) {
+      if (e.status === 401 && state.token && !opts.privateCall) {
+        clearSession();
+        try {
+          return await api(path);
+        } catch (retryErr) {
+          if (retryErr.status === 401) throw { status: 401, authRequired: true };
+          throw retryErr;
+        }
+      }
+      if (e.status === 401) {
+        clearSession();
+        throw { status: 401, authRequired: true };
+      }
+      if (e.status === 503 || !e.status) {
+        state.mode = "preview";
+        renderModeBanner();
+        throw { status: 503, previewFallback: true };
+      }
+      throw e;
+    }
+  }
+
+  async function resolveOwnId() {
+    if (state.user && state.user.id) return state.user.id;
+    if (!state.token) return null;
+    try {
+      var data = await liveFetch("/auth/session", { privateCall: true });
+      if (data && data.user) {
+        state.user = data.user;
+        return data.user.id;
+      }
+    } catch (e) {
+      /* 401 already cleared the session above; 503 fell back */
+    }
+    return null;
+  }
+
+  async function loadLiveDaily() {
+    if (state.liveDaily !== null) return state.liveDaily;
+    try {
+      var data = await liveFetch("/daily-questions?limit=20");
+      state.liveDaily =
+        data && Array.isArray(data.items) && data.items.length > 0
+          ? data.items[0]
+          : false;
+    } catch (e) {
+      state.liveDaily = false;
+    }
+    return state.liveDaily;
+  }
+
+  async function loadLiveFeed(key, topic) {
+    if (!isLive()) return false;
+    if (state.skipLiveRefetch && state.liveFeedKey === key) return true;
+    state.liveFeedError = null;
+    state.liveMore = null;
+    try {
+      var path = "/opinions?limit=20";
+      if (topic) path += "&topic=" + encodeURIComponent(topic);
+      var data = await liveFetch(path);
+      var items = (data.items || []).map(toLiveOpinion);
+      if (state.tab === "debates" || state.route === "debates") {
+        // Debates need both sides: fetch replies per opinion and
+        // keep only opinions that have a For and an Against reply.
+        var withReplies = await Promise.all(
+          items.map(async function (op) {
+            try {
+              var r = await liveFetch(
+                "/opinions/" + op.id + "/replies?limit=20&sort=best",
+              );
+              op.replies = r.items || [];
+            } catch (e2) {
+              op.replies = [];
+            }
+            return op;
+          }),
+        );
+        items = withReplies.filter(function (op) {
+          return (
+            op.replies.some(function (r) {
+              return r.side === "for";
+            }) &&
+            op.replies.some(function (r) {
+              return r.side === "against";
+            })
+          );
+        });
+      }
+      state.liveFeedItems = dedupeById(items);
+      state.liveFeedCursor = data.nextCursor || null;
+      state.liveFeedKey = key;
+      if (state.liveFeedCursor) {
+        state.liveMore = {
+          kind: "feed",
+          cursor: state.liveFeedCursor,
+          topic: topic || null,
+        };
+      }
+      return true;
+    } catch (e) {
+      if (e.authRequired) state.liveFeedError = "auth";
+      else if (e.previewFallback) state.liveFeedError = "preview";
+      else state.liveFeedError = "error";
+      return false;
+    }
+  }
+
+  async function loadMoreLive() {
+    var more = state.liveMore;
+    if (!more || !more.cursor) return false;
+    try {
+      var path;
+      if (more.kind === "feed") {
+        path = "/opinions?limit=20&cursor=" + encodeURIComponent(more.cursor);
+        if (more.topic) path += "&topic=" + encodeURIComponent(more.topic);
+        var data = await liveFetch(path);
+        state.liveFeedItems = dedupeById(
+          state.liveFeedItems.concat((data.items || []).map(toLiveOpinion)),
+        );
+        state.liveFeedCursor = data.nextCursor || null;
+        state.liveMore = state.liveFeedCursor
+          ? { kind: "feed", cursor: state.liveFeedCursor, topic: more.topic }
+          : null;
+        return true;
+      }
+      if (more.kind === "notifications") {
+        var ndata = await liveFetch(
+          "/notifications?limit=20&cursor=" + encodeURIComponent(more.cursor),
+          { privateCall: true },
+        );
+        state.liveNotifications = dedupeById(
+          (state.liveNotifications || []).concat(ndata.items || []),
+        );
+        state.liveNotificationsCursor = ndata.nextCursor || null;
+        state.liveMore = state.liveNotificationsCursor
+          ? { kind: "notifications", cursor: state.liveNotificationsCursor }
+          : null;
+        return true;
+      }
+      if (more.kind === "profile") {
+        var pdata;
+        if (more.tab === "bookmarks") {
+          pdata = await liveFetch(
+            "/bookmarks?limit=20&cursor=" + encodeURIComponent(more.cursor),
+            { privateCall: true },
+          );
+          var newOps = await Promise.all(
+            (pdata.items || []).map(async function (b) {
+              try {
+                var op = await liveFetch("/opinions/" + b.opinionId);
+                return toLiveOpinion(op);
+              } catch (e3) {
+                return null;
+              }
+            }),
+          );
+          state.liveProfileTabItems = dedupeById(
+            (state.liveProfileTabItems || []).concat(
+              newOps.filter(function (x) {
+                return x !== null;
+              }),
+            ),
+          );
+        } else {
+          var base =
+            more.tab === "reposts"
+              ? "/profiles/" + more.profileId + "/reposts"
+              : "/profiles/" + more.profileId + "/opinions";
+          pdata = await liveFetch(
+            base + "?limit=20&cursor=" + encodeURIComponent(more.cursor),
+          );
+          var mapped =
+            more.tab === "reposts"
+              ? (pdata.items || []).map(toLiveRepost)
+              : (pdata.items || []).map(toLiveOpinion);
+          state.liveProfileTabItems = dedupeById(
+            (state.liveProfileTabItems || []).concat(mapped),
+          );
+        }
+        state.liveProfileTabCursor = pdata.nextCursor || null;
+        state.liveMore = state.liveProfileTabCursor
+          ? {
+              kind: "profile",
+              cursor: state.liveProfileTabCursor,
+              tab: more.tab,
+              profileId: more.profileId,
+            }
+          : null;
+        return true;
+      }
+    } catch (e) {
+      if (e.authRequired) showToast("Sign in required to load more.");
+      else showToast("Could not load more.");
+      return false;
+    }
+    return false;
+  }
+
+  async function loadLiveNotifications() {
+    if (!isLive()) return false;
+    if (!state.token) {
+      state.liveNotificationsError = "auth";
+      return false;
+    }
+    if (state.skipLiveRefetch && state.liveNotifications !== null) return true;
+    state.liveNotificationsError = null;
+    try {
+      var data = await liveFetch("/notifications?limit=20", { privateCall: true });
+      state.liveNotifications = dedupeById(data.items || []);
+      state.liveNotificationsCursor = data.nextCursor || null;
+      state.liveMore = state.liveNotificationsCursor
+        ? { kind: "notifications", cursor: state.liveNotificationsCursor }
+        : null;
+      return true;
+    } catch (e) {
+      if (e.authRequired) state.liveNotificationsError = "auth";
+      else if (e.previewFallback) state.liveNotificationsError = "preview";
+      else state.liveNotificationsError = "error";
+      return false;
+    }
+  }
+
+  async function loadLiveProfile(rawId) {
+    if (!isLive()) return false;
+    var id = rawId;
+    if (rawId === "me") {
+      id = await resolveOwnId();
+      if (!id) {
+        state.liveProfileError = "auth";
+        return false;
+      }
+    }
+    if (
+      state.skipLiveRefetch &&
+      state.liveProfileId === id &&
+      state.liveProfileTab === state.profileTab &&
+      state.liveProfileTabItems !== null
+    )
+      return true;
+    state.liveProfileError = null;
+    state.liveMore = null;
+    try {
+      var profile = await liveFetch("/profiles/" + id);
+      state.liveProfile = profile;
+      state.liveProfileId = id;
+      state.livePinnedOpinion = null;
+      if (profile.pinnedOpinionId) {
+        try {
+          var pinnedOp = await liveFetch("/opinions/" + profile.pinnedOpinionId);
+          state.livePinnedOpinion = toLiveOpinion(pinnedOp);
+        } catch (e6) {
+          state.livePinnedOpinion = null;
+        }
+      }
+      state.liveProfileTab = state.profileTab;
+      var tab = state.profileTab;
+      if (tab === "opinions") {
+        var odata = await liveFetch("/profiles/" + id + "/opinions?limit=20");
+        state.liveProfileTabItems = dedupeById((odata.items || []).map(toLiveOpinion));
+        state.liveProfileTabCursor = odata.nextCursor || null;
+      } else if (tab === "reposts") {
+        var rdata = await liveFetch("/profiles/" + id + "/reposts?limit=20");
+        state.liveProfileTabItems = dedupeById((rdata.items || []).map(toLiveRepost));
+        state.liveProfileTabCursor = rdata.nextCursor || null;
+      } else if (tab === "bookmarks") {
+        if (!state.token || id !== (state.user && state.user.id)) {
+          state.liveProfileTabItems = null;
+          state.liveProfileTabCursor = null;
+        } else {
+          var bdata = await liveFetch("/bookmarks?limit=20", { privateCall: true });
+          var ops = await Promise.all(
+            (bdata.items || []).map(async function (b) {
+              try {
+                var op = await liveFetch("/opinions/" + b.opinionId);
+                return toLiveOpinion(op);
+              } catch (e4) {
+                return null;
+              }
+            }),
+          );
+          state.liveProfileTabItems = dedupeById(
+            ops.filter(function (x) {
+              return x !== null;
+            }),
+          );
+          state.liveProfileTabCursor = bdata.nextCursor || null;
+        }
+      } else {
+        // Replies-by-user and likes-by-user have NO API route
+        // (see decision 0012): show an honest state, never sample.
+        state.liveProfileTabItems = [];
+        state.liveProfileTabCursor = null;
+      }
+      if (state.liveProfileTabCursor) {
+        state.liveMore = {
+          kind: "profile",
+          cursor: state.liveProfileTabCursor,
+          tab: tab,
+          profileId: id,
+        };
+      }
+      return true;
+    } catch (e) {
+      if (e.authRequired) state.liveProfileError = "auth";
+      else if (e.previewFallback) state.liveProfileError = "preview";
+      else state.liveProfileError = "error";
+      return false;
+    }
+  }
+
+  async function loadLivePost(id) {
+    if (!isLive()) return false;
+    if (state.skipLiveRefetch && state.livePost && state.livePost.id === id) return true;
+    state.livePostError = null;
+    try {
+      var opinion = await liveFetch("/opinions/" + id);
+      var replies = await liveFetch(
+        "/opinions/" +
+          id +
+          "/replies?limit=20&sort=" +
+          (state.replySort === "newest" ? "newest" : "best"),
+      );
+      var poll = null;
+      try {
+        poll = await liveFetch("/opinions/" + id + "/polls");
+      } catch (e5) {
+        poll = null;
+      }
+      var live = toLiveOpinion(opinion);
+      live.poll = poll;
+      live.replies = replies.items || [];
+      state.livePost = live;
+      state.livePostReplies = live.replies;
+      return true;
+    } catch (e) {
+      if (e.authRequired) state.livePostError = "auth";
+      else if (e.previewFallback) state.livePostError = "preview";
+      else state.livePostError = "error";
+      return false;
+    }
   }
 
   /* ---------------- API client (same-origin /api only) ---------------- */
@@ -856,9 +1303,17 @@
     if (!el) return;
     var action = el.getAttribute("data-action");
     var opinionId = el.getAttribute("data-opinion");
-    var opinion = opinionId ? sampleOpinionById(opinionId) : null;
+    var opinion = opinionId
+      ? sampleOpinionById(opinionId) || liveOpinionById(opinionId)
+      : null;
 
     if (action === "retry") {
+      route();
+      return;
+    }
+    if (action === "load-more") {
+      await loadMoreLive();
+      state.skipLiveRefetch = true;
       route();
       return;
     }
@@ -1127,7 +1582,18 @@
       var note = state.notifications.find(function (n) {
         return n.id === noteId;
       });
+      if (!note && state.liveNotifications) {
+        note = state.liveNotifications.find(function (n) {
+          return n.id === noteId;
+        });
+      }
       if (note) note.isRead = true;
+      if (state.liveNotifications) {
+        var liveNote = state.liveNotifications.find(function (n) {
+          return n.id === noteId;
+        });
+        if (liveNote) liveNote.isRead = true;
+      }
       if (!isPreview()) {
         try {
           await api("/notifications/" + noteId, {
@@ -1262,6 +1728,20 @@
   }
 
   function dailyCardHtml() {
+    if (isLive()) {
+      if (!state.liveDaily) return "";
+      return (
+        '<section class="card card--coral daily-card" aria-label="Daily question">' +
+        '<p class="eyebrow">Daily question</p>' +
+        '<p class="card-text">' +
+        esc(state.liveDaily.question) +
+        "</p>" +
+        '<a class="button button--small" href="#/compose?daily=' +
+        esc(state.liveDaily.id) +
+        '">Answer this question</a>' +
+        '<p class="note">Answers to the Daily Question get a Daily answer badge on the post.</p></section>'
+      );
+    }
     return (
       '<section class="card card--coral daily-card" aria-label="Daily question">' +
       '<p class="eyebrow">Daily question</p>' +
@@ -1275,8 +1755,93 @@
     );
   }
 
+  function loadMoreHtml() {
+    if (!state.liveMore || !state.liveMore.cursor) return "";
+    return '<button type="button" class="button button--secondary" data-action="load-more">Load more</button>';
+  }
+
   function screenFeed() {
     var tab = state.tab;
+    if (isLive()) {
+      if (state.liveFeedError === "auth") {
+        return stateHtml("empty", {
+          title: "Sign in required",
+          text: "Your session expired. Sign in again to see live posts.",
+          action: { href: "#/signin", label: "Sign in" },
+        });
+      }
+      if (state.liveFeedError === "error") {
+        return stateHtml("error", {
+          text: "Live posts could not be loaded. Try again — nothing was changed.",
+        });
+      }
+      if (tab === "following") {
+        if (!state.token) {
+          return (
+            tabsHtml(tab, [
+              { id: "for-you", label: "For You" },
+              { id: "trending", label: "Trending" },
+              { id: "debates", label: "Debates" },
+              { id: "following", label: "Following" },
+            ]) +
+            stateHtml("empty", {
+              title: "Sign in to see people you follow",
+              text: "Following is private to your account.",
+              action: { href: "#/signin", label: "Sign in" },
+            })
+          );
+        }
+        return (
+          tabsHtml(tab, [
+            { id: "for-you", label: "For You" },
+            { id: "trending", label: "Trending" },
+            { id: "debates", label: "Debates" },
+            { id: "following", label: "Following" },
+          ]) +
+          stateHtml("empty", {
+            title: "Following list is not available yet",
+            text: "The API has follow and unfollow, but no list of the people you follow, so this tab cannot be filled from live data yet. Follow people from their profiles or posts.",
+            action: { href: "#/explore", label: "Explore topics" },
+          })
+        );
+      }
+      var liveAll = visibleOpinions(state.liveFeedItems || []);
+      var liveList = liveAll;
+      if (tab === "trending")
+        liveList = liveAll.slice().sort(function (a, b) {
+          return b.likeCount + b.repostCount - (a.likeCount + a.repostCount);
+        });
+      if (liveList.length === 0) {
+        return (
+          tabsHtml(tab, [
+            { id: "for-you", label: "For You" },
+            { id: "trending", label: "Trending" },
+            { id: "debates", label: "Debates" },
+            { id: "following", label: "Following" },
+          ]) +
+          stateHtml("empty", {
+            title: "No opinions here yet",
+            text: "Try another tab, or write the first opinion on this topic.",
+            action: { href: "#/compose", label: "Write an opinion" },
+          })
+        );
+      }
+      return (
+        tabsHtml(tab, [
+          { id: "for-you", label: "For You" },
+          { id: "trending", label: "Trending" },
+          { id: "debates", label: "Debates" },
+          { id: "following", label: "Following" },
+        ]) +
+        dailyCardHtml() +
+        liveList
+          .map(function (o) {
+            return opinionCardHtml(o, { showMenu: state.openMenuFor === o.id });
+          })
+          .join("") +
+        loadMoreHtml()
+      );
+    }
     var all = visibleOpinions(SAMPLE_OPINIONS);
     var list = all;
     if (tab === "trending")
@@ -1393,6 +1958,22 @@
   }
 
   function screenPost() {
+    if (isLive() && state.livePost) {
+      var liveOpinion = state.livePost;
+      if (isHidden(liveOpinion)) {
+        return stateHtml("empty", {
+          title: "This post is hidden",
+          text: "You hid, muted, or blocked this content. Restore it from Settings → Respect Filter.",
+          action: { href: "#/settings", label: "Open Settings" },
+        });
+      }
+      return screenPostLive(liveOpinion);
+    }
+    if (isLive() && state.livePostError) {
+      return stateHtml("error", {
+        text: "That opinion could not be loaded. It may have been deleted, or the link is wrong.",
+      });
+    }
     var opinion = sampleOpinionById(state.param);
     if (!opinion) {
       return stateHtml("error", {
@@ -1525,7 +2106,177 @@
     );
   }
 
+  function screenPostLive(opinion) {
+    var replies = (state.livePostReplies || []).slice();
+    if (state.replySideFilter !== "all")
+      replies = replies.filter(function (r) {
+        return r.side === state.replySideFilter;
+      });
+    if (state.replySort === "best")
+      replies.sort(function (a, b) {
+        return b.voiceScore - a.voiceScore;
+      });
+    var topReply = (state.livePostReplies || []).slice().sort(function (a, b) {
+      return b.voiceScore - a.voiceScore;
+    })[0];
+    var replyCards =
+      replies.length === 0
+        ? stateHtml("empty", {
+            title: "No replies yet",
+            text: "Be the first to reply — pick a side: For, Against, or Neutral.",
+          })
+        : replies
+            .map(function (r) {
+              var isTop = topReply && r.id === topReply.id;
+              var rAuthor = r.author || {
+                displayName: "Unknown",
+                handle: "unknown",
+                authorId: null,
+              };
+              return (
+                '<article class="card reply-card"><div class="post-head">' +
+                avatarHtml(rAuthor, false) +
+                '<div class="post-meta">' +
+                authorLineHtml(rAuthor, false) +
+                ' <span class="badge">' +
+                esc(r.side) +
+                "</span>" +
+                (isTop ? ' <span class="badge">Best Argument</span>' : "") +
+                "</div></div>" +
+                '<p class="card-text">' +
+                esc(r.body) +
+                "</p>" +
+                "<p>Voice Score: " +
+                r.voiceScore +
+                "</p>" +
+                '<button type="button" data-action="reply-like" data-reply="' +
+                esc(r.id) +
+                '">♥ Like reply</button></article>'
+              );
+            })
+            .join("");
+    var debateHtml = "";
+    if (state.debateMode) {
+      var fors = (state.livePostReplies || []).filter(function (r) {
+        return r.side === "for";
+      });
+      var againsts = (state.livePostReplies || []).filter(function (r) {
+        return r.side === "against";
+      });
+      var col = function (list, label) {
+        return (
+          '<section aria-label="' +
+          label +
+          '"><h2>' +
+          label +
+          "</h2>" +
+          (list.length === 0
+            ? "<p>No " + label.toLowerCase() + " replies yet.</p>"
+            : list
+                .map(function (r) {
+                  var ra = r.author || { displayName: "Unknown" };
+                  return (
+                    '<article class="card reply-card"><p>' +
+                    esc(r.body) +
+                    "</p><p>— " +
+                    esc(ra.displayName) +
+                    " · Voice Score " +
+                    r.voiceScore +
+                    "</p></article>"
+                  );
+                })
+                .join("")) +
+          "</section>"
+        );
+      };
+      debateHtml =
+        '<div class="split">' + col(fors, "For") + col(againsts, "Against") + "</div>";
+    }
+    return (
+      '<section><a href="#/feed">← Back to feed</a>' +
+      opinionCardHtml(opinion, { showMenu: state.openMenuFor === opinion.id }) +
+      '<div class="controls" role="group" aria-label="Debate controls">' +
+      '<button type="button" class="button button--small" data-action="debate-toggle">' +
+      (state.debateMode ? "Exit Debate Mode" : "Debate Mode: split For / Against") +
+      "</button> " +
+      '<label for="reply-sort">Sort replies</label>' +
+      '<select id="reply-sort"><option value="best"' +
+      (state.replySort === "best" ? " selected" : "") +
+      ">Best Argument</option>" +
+      '<option value="newest"' +
+      (state.replySort === "newest" ? " selected" : "") +
+      ">Newest</option></select> " +
+      '<label for="reply-side">Side</label>' +
+      '<select id="reply-side"><option value="all">All sides</option><option value="for"' +
+      (state.replySideFilter === "for" ? " selected" : "") +
+      ">For</option>" +
+      '<option value="against"' +
+      (state.replySideFilter === "against" ? " selected" : "") +
+      ">Against</option>" +
+      '<option value="neutral"' +
+      (state.replySideFilter === "neutral" ? " selected" : "") +
+      ">Neutral</option></select></div>" +
+      (state.debateMode ? debateHtml : "<h2>Replies</h2>" + replyCards) +
+      '<section class="form-screen"><h2>Write a reply</h2>' +
+      '<form id="reply-form" novalidate>' +
+      '<label for="reply-body">Your reply (1–280 characters)</label>' +
+      '<textarea id="reply-body" rows="4" maxlength="280" required aria-describedby="reply-count"></textarea>' +
+      '<p id="reply-count" class="counter" aria-live="polite">0/280</p>' +
+      '<label for="reply-side-input">Your side</label>' +
+      '<select id="reply-side-input"><option value="for">For</option><option value="against">Against</option><option value="neutral">Neutral</option></select>' +
+      '<button class="button" type="submit">Post reply</button>' +
+      '<p id="reply-error" class="form-error" role="alert"></p>' +
+      '<p id="reply-success" class="form-success" role="status"></p></form></section></section>'
+    );
+  }
+
   function screenExplore() {
+    if (isLive()) {
+      var liveCounts = {};
+      (state.liveFeedItems || []).forEach(function (o) {
+        liveCounts[o.topic] = (liveCounts[o.topic] || 0) + o.likeCount + o.repostCount;
+      });
+      var liveTopics = Object.keys(liveCounts)
+        .map(function (t) {
+          return { topic: t, score: liveCounts[t] };
+        })
+        .sort(function (a, b) {
+          return b.score - a.score;
+        })
+        .slice(0, 6);
+      var liveRows = liveTopics
+        .map(function (t, i) {
+          return (
+            '<li><span class="rank">' +
+            (i + 1) +
+            "</span> " +
+            '<a href="#/feed?topic=' +
+            encodeURIComponent(t.topic) +
+            '">' +
+            esc(t.topic) +
+            "</a> · " +
+            t.score +
+            " signals</li>"
+          );
+        })
+        .join("");
+      return (
+        "<section><h1>Explore</h1>" +
+        '<form id="search-form" role="search"><label for="search-q">Search opinions (up to 100 characters)</label>' +
+        '<input id="search-q" type="search" maxlength="100" />' +
+        '<button class="button" type="submit">Search</button></form>' +
+        '<div id="search-results"></div>' +
+        "<h2>Trending Topics · Ranked</h2>" +
+        '<ol class="ranked">' +
+        liveRows +
+        "</ol>" +
+        '<p class="note">Ranks are 1–6, computed from recent live posts. There is no rank 0.</p>' +
+        "<h2>People to Discover</h2>" +
+        '<p class="note">Not available: Layer 5 deliberately has no profile-list or user-search route, pending its own privacy review. ' +
+        "This screen does not invent one — people are discovered through their posts, not a directory.</p>" +
+        "</section>"
+      );
+    }
     var counts = {};
     SAMPLE_OPINIONS.forEach(function (o) {
       counts[o.topic] = (counts[o.topic] || 0) + o.likeCount + o.repostCount;
@@ -1573,6 +2324,30 @@
   }
 
   function screenDebates() {
+    if (isLive()) {
+      if (state.liveFeedError === "auth") {
+        return stateHtml("empty", {
+          title: "Sign in required",
+          text: "Your session expired. Sign in again to see live debates.",
+          action: { href: "#/signin", label: "Sign in" },
+        });
+      }
+      var liveDebates = visibleOpinions(state.liveFeedItems || []);
+      if (liveDebates.length === 0)
+        return stateHtml("empty", {
+          title: "No debates yet",
+          text: "A debate needs at least one For reply and one Against reply on the same opinion.",
+        });
+      return (
+        "<h1>Debates</h1>" +
+        liveDebates
+          .map(function (o) {
+            return opinionCardHtml(o, {});
+          })
+          .join("") +
+        loadMoreHtml()
+      );
+    }
     var list = visibleOpinions(SAMPLE_OPINIONS).filter(function (o) {
       return (
         o.replies.some(function (r) {
@@ -1599,10 +2374,67 @@
   }
 
   function screenNotifications() {
+    if (isLive()) {
+      if (state.liveNotificationsError === "auth" || !state.token) {
+        return stateHtml("empty", {
+          title: "Sign in to see notifications",
+          text: "Notifications are private to your account.",
+          action: { href: "#/signin", label: "Sign in" },
+        });
+      }
+      if (state.liveNotificationsError === "error") {
+        return stateHtml("error", {
+          text: "Notifications could not be loaded. Try again — nothing was changed.",
+        });
+      }
+      var liveNotes = state.liveNotifications || [];
+      if (liveNotes.length === 0) {
+        return stateHtml("empty", {
+          title: "No notifications",
+          text: "Likes, replies, and reposts on your opinions will appear here.",
+        });
+      }
+      var liveUnread = liveNotes.filter(function (n) {
+        return !n.isRead;
+      }).length;
+      return (
+        "<h1>Notifications" +
+        (liveUnread ? " (" + liveUnread + " unread)" : "") +
+        "</h1>" +
+        liveNotes
+          .map(function (n) {
+            var actor = n.actor || {
+              displayName: "Anonymous",
+              handle: "Anonymous",
+              authorId: null,
+            };
+            return (
+              '<article class="card notification-card' +
+              (n.isRead ? " is-read" : "") +
+              '">' +
+              "<p><strong>" +
+              esc(actor.displayName) +
+              "</strong> " +
+              esc(n.type) +
+              "d your post</p>" +
+              '<button type="button" data-action="mark-read" data-notification="' +
+              esc(n.id) +
+              '"' +
+              (n.isRead ? " disabled" : "") +
+              ">" +
+              (n.isRead ? "Read ✓" : "Mark as read") +
+              "</button></article>"
+            );
+          })
+          .join("") +
+        loadMoreHtml() +
+        '<p class="note">Notifications are created by the server only — users cannot post notifications, and nobody else can see yours.</p>'
+      );
+    }
     if (!state.token && !isPreview()) {
       return stateHtml("empty", {
         title: "Sign in to see notifications",
-        text: "Notifications are private to your account. Sign-in is not live yet, so this list cannot be loaded for a real account.",
+        text: "Notifications are private to your account.",
       });
     }
     if (state.notifications.length === 0) {
@@ -1649,6 +2481,162 @@
 
   function screenProfile() {
     var id = state.param;
+    if (isLive()) {
+      if (state.liveProfileError === "auth") {
+        return stateHtml("empty", {
+          title: "Sign in to see your profile",
+          text: "Your own profile, likes, and saved posts need a live session.",
+          action: { href: "#/signin", label: "Sign in" },
+        });
+      }
+      if (state.liveProfileError === "error" || !state.liveProfile) {
+        return stateHtml("error", {
+          text: "That profile could not be loaded. It may not exist, or the link is wrong.",
+        });
+      }
+      var lp = state.liveProfile;
+      var isOwn = state.user && state.user.id && lp.id === state.user.id;
+      var ltab = state.profileTab;
+      var lbody = "";
+      if (ltab === "opinions") {
+        var lops = state.liveProfileTabItems || [];
+        lbody =
+          lops.length === 0
+            ? stateHtml("empty", {
+                title: "No opinions yet",
+                text: "This person has not posted an opinion yet.",
+              })
+            : lops
+                .map(function (o) {
+                  return opinionCardHtml(o, {});
+                })
+                .join("");
+      } else if (ltab === "replies") {
+        lbody = stateHtml("empty", {
+          title: "Replies by this person are not listed yet",
+          text: "The API has replies per opinion, but no replies-by-user route, so this tab cannot be filled from live data yet. Replies are visible on each opinion's page.",
+        });
+      } else if (ltab === "reposts") {
+        var lreps = state.liveProfileTabItems || [];
+        lbody =
+          lreps.length === 0
+            ? stateHtml("empty", {
+                title: "0 reposts",
+                text: "This person has not reposted anything yet.",
+              })
+            : "<p>" +
+              lreps.length +
+              " reposts</p>" +
+              lreps
+                .map(function (rep) {
+                  return (
+                    '<article class="card">' +
+                    (rep.quoteTake
+                      ? '<p class="card-text">' + esc(rep.quoteTake) + "</p>"
+                      : "") +
+                    (rep.original
+                      ? '<div class="quote-block"><p>' +
+                        esc(rep.original.body) +
+                        "</p><p>— " +
+                        esc(
+                          rep.original.isAnonymous
+                            ? "Anonymous"
+                            : rep.original.author.displayName,
+                        ) +
+                        "</div>"
+                      : "") +
+                    "<p>" +
+                    (rep.quoteTake ? "Quote Repost" : "Repost") +
+                    "</p></article>"
+                  );
+                })
+                .join("");
+      } else if (ltab === "likes") {
+        lbody = stateHtml("empty", {
+          title: "Likes are not listed yet",
+          text: "The API has like and unlike, but no likes-by-user route, so this tab cannot be filled from live data yet. Your own likes are never shown to other people.",
+        });
+      } else if (ltab === "bookmarks") {
+        if (!isOwn) {
+          lbody = stateHtml("empty", {
+            title: "Read Later is private",
+            text: "Other people's saved posts are never shown to you.",
+          });
+        } else {
+          var lbooks = state.liveProfileTabItems || [];
+          lbody =
+            lbooks.length === 0
+              ? stateHtml("empty", {
+                  title: "Nothing saved yet",
+                  text: "Bookmark opinions from the feed to find them here later.",
+                })
+              : lbooks
+                  .map(function (o) {
+                    return opinionCardHtml(o, {});
+                  })
+                  .join("");
+        }
+      }
+      var followedLive = state.followedAuthors.indexOf(lp.id) !== -1;
+      return (
+        '<section class="profile">' +
+        '<div class="profile-head"><span class="avatar avatar--large" aria-hidden="true">' +
+        esc(lp.initials || initialsFor(lp.displayName)) +
+        "</span>" +
+        "<div><h1>" +
+        esc(lp.displayName) +
+        "</h1><p>@ " +
+        esc(lp.handle) +
+        "</p>" +
+        "<p>" +
+        lp.followingCount +
+        " Following · " +
+        lp.followerCount +
+        " Followers · " +
+        (state.liveProfileTabItems && ltab === "opinions"
+          ? state.liveProfileTabItems.length
+          : "") +
+        "</p>" +
+        (lp.bio ? "<p>" + esc(lp.bio) + "</p>" : "") +
+        (isOwn
+          ? ""
+          : '<button type="button" class="button button--small" data-action="follow" data-author="' +
+            esc(lp.id) +
+            '">' +
+            (followedLive ? "Following ✓" : "Follow") +
+            "</button>") +
+        "</div></div>" +
+        '<p class="note">Initials-only avatar. No cover photo and no photo upload — text only, by design.</p>' +
+        (state.livePinnedOpinion
+          ? '<section aria-label="Pinned post"><h2>Pinned</h2>' +
+            opinionCardHtml(state.livePinnedOpinion, {}) +
+            "</section>"
+          : "") +
+        '<div class="tabs" role="tablist" aria-label="Profile sections">' +
+        ["opinions", "replies", "reposts", "likes", "bookmarks"]
+          .map(function (tt) {
+            var label = tt.charAt(0).toUpperCase() + tt.slice(1);
+            return (
+              '<a role="tab" aria-selected="' +
+              (tt === ltab ? "true" : "false") +
+              '" class="tab' +
+              (tt === ltab ? " is-active" : "") +
+              '" href="#/profile/' +
+              esc(id) +
+              "?tab=" +
+              tt +
+              '">' +
+              label +
+              "</a>"
+            );
+          })
+          .join("") +
+        "</div>" +
+        lbody +
+        loadMoreHtml() +
+        "</section>"
+      );
+    }
     if (id === "me") {
       return stateHtml("empty", {
         title: "Sign in to see your profile",
@@ -1989,7 +2977,7 @@
     return { segments: segments, query: query };
   }
 
-  function route() {
+  async function route() {
     var parsed = parseHash();
     var segments = parsed.segments;
     state.query = parsed.query;
@@ -1999,6 +2987,35 @@
       state.tab = parsed.query.tab || "for-you";
       if (parsed.query.topic) {
         var topic = parsed.query.topic;
+        if (isLive()) {
+          setMain(stateHtml("loading"));
+          await loadLiveFeed("topic:" + topic, topic);
+          var topicList = visibleOpinions(state.liveFeedItems || []);
+          setMain(
+            "<h1>Topic: " +
+              esc(topic) +
+              "</h1>" +
+              (state.liveFeedError === "auth"
+                ? stateHtml("empty", {
+                    title: "Sign in required",
+                    text: "Your session expired. Sign in again.",
+                    action: { href: "#/signin", label: "Sign in" },
+                  })
+                : topicList.length === 0
+                  ? stateHtml("empty", {
+                      title: "No opinions on this topic yet",
+                      text: "Try another topic, or write the first opinion.",
+                    })
+                  : topicList
+                      .map(function (o) {
+                        return opinionCardHtml(o, {});
+                      })
+                      .join("") + loadMoreHtml()),
+          );
+          state.skipLiveRefetch = false;
+          bindForms();
+          return;
+        }
         var list = visibleOpinions(SAMPLE_OPINIONS).filter(function (o) {
           return o.topic === topic;
         });
@@ -2021,6 +3038,36 @@
       }
     }
     if (state.route === "profile") state.profileTab = parsed.query.tab || "opinions";
+    // Live-list loading: fetch before rendering, so a signed-in
+    // user never sees sample data presented as live. The loading
+    // state is shown while fetching; on 503 the loader flips the
+    // mode to preview and the sample screens below render with
+    // the labelled preview banner.
+    if (isLive()) {
+      var needsLive =
+        state.route === "feed" ||
+        state.route === "explore" ||
+        state.route === "debates" ||
+        state.route === "notifications" ||
+        state.route === "profile" ||
+        state.route === "post";
+      if (needsLive) setMain(stateHtml("loading"));
+      if (state.route === "feed") {
+        await loadLiveDaily();
+        await loadLiveFeed("feed:" + state.tab);
+      } else if (state.route === "explore") {
+        await loadLiveFeed("explore");
+      } else if (state.route === "debates") {
+        await loadLiveFeed("debates");
+      } else if (state.route === "notifications") {
+        await loadLiveNotifications();
+      } else if (state.route === "profile") {
+        await loadLiveProfile(state.param);
+      } else if (state.route === "post") {
+        await loadLivePost(state.param);
+      }
+      state.skipLiveRefetch = false;
+    }
     var html = "";
     if (state.route === "welcome") html = screenWelcome();
     else if (state.route === "signin") html = screenSignIn();
@@ -2338,7 +3385,7 @@
 
     var searchForm = document.getElementById("search-form");
     if (searchForm) {
-      searchForm.addEventListener("submit", function (e) {
+      searchForm.addEventListener("submit", async function (e) {
         e.preventDefault();
         var q = document.getElementById("search-q").value.trim();
         var out = document.getElementById("search-results");
@@ -2346,6 +3393,62 @@
         if (q.length === 0 || q.length > 100) {
           out.innerHTML =
             '<p class="form-error" role="alert">Search must be 1–100 characters.</p>';
+          return;
+        }
+        if (isLive()) {
+          try {
+            var sdata = await liveFetch(
+              "/opinions?search=" + encodeURIComponent(q) + "&limit=20",
+            );
+            var shits = dedupeById((sdata.items || []).map(toLiveOpinion));
+            out.innerHTML =
+              "<h2>Search results for “" +
+              esc(q) +
+              "”</h2>" +
+              (shits.length === 0
+                ? stateHtml("empty", {
+                    title: "No opinions matched",
+                    text: "Try different words, or browse a topic.",
+                  })
+                : shits
+                    .map(function (o) {
+                      return opinionCardHtml(o, {});
+                    })
+                    .join(""));
+          } catch (serr) {
+            if (serr.authRequired) {
+              clearSession();
+              out.innerHTML = stateHtml("empty", {
+                title: "Sign in required",
+                text: "Your session expired. Sign in again to search live posts.",
+                action: { href: "#/signin", label: "Sign in" },
+              });
+            } else if (serr.previewFallback) {
+              out.innerHTML =
+                '<p class="note">Live search is unavailable — showing preview results below.</p>';
+              var phits = visibleOpinions(SAMPLE_OPINIONS).filter(function (o) {
+                return o.body.toLowerCase().indexOf(q.toLowerCase()) !== -1;
+              });
+              out.innerHTML +=
+                "<h2>Search results for “" +
+                esc(q) +
+                "” (preview)</h2>" +
+                (phits.length === 0
+                  ? stateHtml("empty", {
+                      title: "No opinions matched",
+                      text: "Try different words, or browse a topic.",
+                    })
+                  : phits
+                      .map(function (o) {
+                        return opinionCardHtml(o, {});
+                      })
+                      .join(""));
+            } else {
+              out.innerHTML = stateHtml("error", {
+                text: "Search could not be completed. Try again.",
+              });
+            }
+          }
           return;
         }
         var hits = visibleOpinions(SAMPLE_OPINIONS).filter(function (o) {

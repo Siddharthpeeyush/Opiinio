@@ -116,6 +116,13 @@ include timeouts and component-level status (skill: operate-and-scale).
   in code, providers not yet enabled live, account deletion
   gated but SERVER_ONLY; see
   docs/decisions/0011-server-auth-routes.md.
+- 0012 Live-list pass (feed, notifications, own-profile, and
+  post detail fetch live data through /api/\* only, cursor
+  pagination with de-duplication by id, 401 → sign-in-required,
+  503 → labelled preview) — written in code, no live Supabase
+  call; following / replies-by-user / likes-by-user tabs have
+  no API route and show honest empty states; see
+  docs/decisions/0012-live-list-pass.md.
 
 ## What this repo is NOT
 
@@ -159,7 +166,14 @@ include timeouts and component-level status (skill: operate-and-scale).
   live (providers not enabled live, migration 05 not applied
   live, no key shared) and no live visual 390px/1440px check
   has been run; see
-  `docs/decisions/0011-server-auth-routes.md`. Account
+  `docs/decisions/0011-server-auth-routes.md`. The live-list
+  pass (`public/app.js` loaders, `tests/live-list.test.ts`,
+  `docs/decisions/0012-live-list-pass.md`) is also written in
+  code: feed, notifications, own-profile, and post detail now
+  fetch live data through /api/\* when configured, with
+  labelled preview fallback when not — but no live Supabase
+  call has been run, and following / replies-by-user /
+  likes-by-user tabs have no API route yet. Account
   deletion is aal-gated but SERVER_ONLY in this layer (GoTrue
   admin deletion needs a service_role key that is never wired
   here).
