@@ -10,8 +10,9 @@
  * netlify.toml rewrites /api/* to this function (status 200, original URL
  * preserved); the Netlify CDN serves everything else from public/.
  *
- * Compiled by tsc into dist/functions/api.js; netlify.toml points the
- * functions directory at dist/functions. Zero runtime dependencies —
+ * Compiled by tsc into dist/src/functions/api.js (rootDir "." mirrors
+ * the source tree); netlify.toml points the functions directory at
+ * dist/src/functions. Zero runtime dependencies —
  * only node: builtins and the app's own modules.
  */
 

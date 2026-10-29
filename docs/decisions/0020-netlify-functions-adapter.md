@@ -20,7 +20,7 @@ topology was documented without verifying the runtime fits the host.
   All routing, auth, validation, rate limiting, and privacy rules live
   in `route()` and below; nothing is reimplemented in the adapter.
 - `netlify.toml`: build `npm run build` (tsc), publish `public/`
-  (CDN-served statics), functions `dist/functions`, and a 200 rewrite
+  (CDN-served statics), functions `dist/src/functions`, and a 200 rewrite
   `/api/* → /.netlify/functions/api` so `event.path` is the API path
   `route()` expects.
 - The function only answers `/api/*` (anything else → generic 404);

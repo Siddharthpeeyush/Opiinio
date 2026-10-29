@@ -1,11 +1,12 @@
 # Opiinio on Netlify (decision 0020): the static editorial frontend is served
 # from public/ on the Netlify CDN; the API runs as a serverless function.
-# `npm run build` (tsc) runs first, so dist/functions/api.js exists before
-# the functions directory is bundled.
+# `npm run build` (tsc, rootDir ".") compiles src/functions/api.ts into
+# dist/src/functions/api.js, so the functions directory must point there —
+# dist/functions does NOT exist (that was a shipped bug, fixed here).
 [build]
   command = "npm run build"
   publish = "public"
-  functions = "dist/functions"
+  functions = "dist/src/functions"
 
 # Rewrite (200, not redirect): the original /api/* URL is preserved, so the
 # function's event.path is the API path route() expects. Everything else

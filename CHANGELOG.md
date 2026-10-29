@@ -16,7 +16,7 @@ All notable changes, newest first. One entry per layer. Dates in IST.
   reimplemented — routing, auth, validation, rate limiting, and
   privacy all stay in `route()` and below. Zero runtime dependencies.
 - Added `netlify.toml`: build `npm run build`, publish `public/`,
-  functions `dist/functions`, 200-rewrite `/api/*` to the function
+  functions `dist/src/functions`, 200-rewrite `/api/*` to the function
   (original URL preserved).
 - Known limitation (recorded, not hidden): the in-memory rate limiter
   is per warm function instance on serverless, so strict per-IP

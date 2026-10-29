@@ -47,7 +47,7 @@ logins, his taps). Nothing here holds credentials, tokens, or keys.
 Netlify's free tier serves static files; it cannot run the long-lived
 Node server (`src/server.ts`). `src/functions/api.ts` is a thin adapter
 — Netlify HTTP event → `route()` → HTTP response — compiled by tsc into
-`dist/functions/`; `netlify.toml` publishes `public/` on the CDN and
+`dist/src/functions/`; `netlify.toml` publishes `public/` on the CDN and
 200-rewrites `/api/*` to the function (original URL preserved, so
 `event.path` is the API path `route()` expects). Honest limitation: the
 in-memory rate limiter is per warm function instance, so strict per-IP
