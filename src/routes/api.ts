@@ -41,6 +41,7 @@ import {
 } from "../lib/http.js";
 import { corsHeaders } from "../lib/cors.js";
 import { logRequest, newRequestId, SECURITY_HEADERS } from "../lib/log.js";
+import { reportError } from "../lib/errors.js";
 import { bucketForApiRoute, hashKeyPart, type RateLimiter } from "../lib/rateLimit.js";
 import { decodeCursor, parseLimit } from "../lib/pagination.js";
 import { isUuid } from "../lib/validation.js";
@@ -58,6 +59,8 @@ export interface ApiDeps {
   rateLimiter?: RateLimiter;
   /** Direct socket address from server.ts, hashed before keying. */
   clientIp?: string | null;
+  /** App environment for log lines; route() supplies env.appEnv. */
+  appEnv?: string;
 }
 
 export interface ApiResult {
@@ -198,10 +201,20 @@ export async function handleApi(
   deps: ApiDeps = {},
 ): Promise<ApiResult> {
   const requestId = newRequestId();
+  const startMs = Date.now();
+  const appEnv = deps.appEnv ?? "unknown";
   const { segments, query } = splitPath(pathname);
   const cors = corsHeaders(headers.origin ?? null, deps.appOrigin);
   if (cors === null) {
-    logRequest({ requestId, route: "/api/*", method, status: 403, userId: null });
+    logRequest({
+      requestId,
+      route: "/api/*",
+      method,
+      status: 403,
+      userId: null,
+      durationMs: Date.now() - startMs,
+      appEnv,
+    });
     return fail(new ApiError(403, "FORBIDDEN", "Not allowed"));
   }
   const routePattern = `/api/${segments.slice(1, 3).join("/")}`;
@@ -220,6 +233,8 @@ export async function handleApi(
       method,
       status: result.statusCode,
       userId,
+      durationMs: Date.now() - startMs,
+      appEnv,
     });
     return { ...result, headers: { ...result.headers, ...cors } };
   } catch (error) {
@@ -230,7 +245,13 @@ export async function handleApi(
       method,
       status: apiError.status,
       userId: null,
+      durationMs: Date.now() - startMs,
+      appEnv,
     });
+    if (apiError.status >= 500) {
+      // 5xx only: 4xx client errors are noise, not incidents.
+      reportError(error, { requestId, route: routePattern, userId: null });
+    }
     return fail(apiError, cors);
   }
 }

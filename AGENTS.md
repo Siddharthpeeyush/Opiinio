@@ -218,6 +218,19 @@ include timeouts and component-level status (skill: operate-and-scale).
   now guarded by safeSvg()); account deletion NOT built
   (future admin layer only). See
   docs/decisions/0015-security-review.md.
+- 0016 Hosting + observability — written in code, NOT
+  pushed: `APP_ENV` (development/staging/production) with
+  production-only required vars + placeholder refusal in
+  `src/lib/env.ts`; request logs carry `durationMs` + `appEnv`;
+  `src/lib/errors.ts` redacted error hook (stderr today,
+  swappable); extended `/api/health` (app/config/rateLimiter
+  components, `appEnv`, overall status; Supabase honestly
+  not_configured/not_checked); `Cache-Control: public,
+max-age=600` on static assets only, API stays no-store;
+  `docs/hosting.md`, `docs/monitoring.md` (5 signals,
+  thresholds, runbooks, incident process). Tests 186/186
+  (`tests/observability.test.ts`, 15 new). See
+  docs/decisions/0016-hosting-observability.md.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.

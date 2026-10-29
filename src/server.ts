@@ -7,6 +7,7 @@
 import { createServer } from "node:http";
 import { route } from "./app.js";
 import { loadEnv } from "./lib/env.js";
+import { reportError } from "./lib/errors.js";
 import { createDefaultRateLimiter } from "./lib/rateLimit.js";
 
 const env = loadEnv();
@@ -63,8 +64,11 @@ async function handleRequest(
       ...result.headers,
     });
     res.end(result.body);
-  } catch {
-    // Never leak internal detail to the client.
+  } catch (error) {
+    // Unexpected throw outside the route handlers: redacted report
+    // to the error hook, generic 500 to the client. Never leak
+    // internal detail.
+    reportError(error, {});
     res.writeHead(500, { "content-type": "application/json" });
     res.end(
       JSON.stringify({

@@ -15,7 +15,8 @@ export type ComponentHealthStatus = "not_configured" | "not_checked";
 
 export interface ComponentHealth {
   /**
-   * Honesty rule (Layers 3–4): this is NEVER "ok" in these layers.
+   * Honesty rule (Layers 3–4, still in force): this is NEVER "ok"
+   * for Supabase in these layers.
    * - "not_configured": SUPABASE_URL or SUPABASE_ANON_KEY is missing.
    * - "not_checked": both are present, but no live probe exists yet
    *   (auth verification exists in lib/auth.ts, but no route calls
@@ -34,13 +35,37 @@ export type DatabaseHealthStatus = ComponentHealthStatus;
 export type DatabaseHealth = ComponentHealth;
 export type AuthHealth = ComponentHealth;
 
-export interface HealthCheck {
+export interface LocalComponentHealth {
   status: "ok";
+}
+
+export interface RateLimiterHealth extends LocalComponentHealth {
+  /** The store behind the limiter. No counts, no keys — never user data. */
+  store: "in-memory";
+}
+
+export interface ConfigHealth extends LocalComponentHealth {
+  appEnv: string;
+}
+
+export interface HealthCheck {
+  /** Overall: "ok" while the process answers; "degraded" reserved
+   * for the layer that adds live probes (a failing probe must be
+   * able to move this). Never faked "ok" for unchecked components. */
+  status: "ok" | "degraded";
   /** Scaffold-scope only: the app process itself. */
   scope: "app";
+  /** development | staging | production — from APP_ENV. */
+  appEnv: string;
   /** Names of optional env vars present (never values). */
   envPresent: string[];
-  checks: { database: ComponentHealth; auth: ComponentHealth };
+  checks: {
+    app: LocalComponentHealth;
+    config: ConfigHealth;
+    rateLimiter: RateLimiterHealth;
+    database: ComponentHealth;
+    auth: ComponentHealth;
+  };
   uptimeSeconds: number;
   timestamp: string;
 }
@@ -57,8 +82,12 @@ export function buildHealth(env: EnvConfig): HealthCheck {
   return {
     status: "ok",
     scope: "app",
+    appEnv: env.appEnv,
     envPresent: env.presentOptional,
     checks: {
+      app: { status: "ok" },
+      config: { status: "ok", appEnv: env.appEnv },
+      rateLimiter: { status: "ok", store: "in-memory" },
       database: { ...component },
       auth: { ...component },
     },

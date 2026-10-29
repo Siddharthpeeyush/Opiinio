@@ -61,6 +61,7 @@ import {
 } from "../lib/http.js";
 import { corsHeaders } from "../lib/cors.js";
 import { logRequest, newRequestId, SECURITY_HEADERS } from "../lib/log.js";
+import { reportError } from "../lib/errors.js";
 import { hashKeyPart } from "../lib/rateLimit.js";
 import { hasVerifiedTotpFactor, listFactors, unenrollTotp } from "../lib/mfa.js";
 import { enrollTotp, challengeTotp } from "../lib/mfa.js";
@@ -94,6 +95,8 @@ export interface AuthDeps {
    */
   rateLimit?: (routePattern: string, key?: string) => Promise<void>;
   appOrigin?: string;
+  /** App environment for log lines; route() supplies env.appEnv. */
+  appEnv?: string;
 }
 
 export interface AuthResult {
@@ -237,11 +240,21 @@ export async function handleAuth(
   deps: AuthDeps = {},
 ): Promise<AuthResult> {
   const requestId = newRequestId();
+  const startMs = Date.now();
+  const appEnv = deps.appEnv ?? "unknown";
   const segments = splitPath(pathname);
   const rest = segments.slice(1); // segments[0] is "api"
   const cors = corsHeaders(headers.origin ?? null, deps.appOrigin);
   if (cors === null) {
-    logRequest({ requestId, route: "/api/auth/*", method, status: 403, userId: null });
+    logRequest({
+      requestId,
+      route: "/api/auth/*",
+      method,
+      status: 403,
+      userId: null,
+      durationMs: Date.now() - startMs,
+      appEnv,
+    });
     return fail(forbidden());
   }
   const pattern = authRoutePattern(rest);
@@ -430,6 +443,8 @@ export async function handleAuth(
       method,
       status: outcome.result.statusCode,
       userId: outcome.userId,
+      durationMs: Date.now() - startMs,
+      appEnv,
     });
     return { ...outcome.result, headers: { ...outcome.result.headers, ...cors } };
   } catch (error) {
@@ -446,7 +461,13 @@ export async function handleAuth(
       method,
       status: apiError.status,
       userId: null,
+      durationMs: Date.now() - startMs,
+      appEnv,
     });
+    if (apiError.status >= 500) {
+      // 5xx only: 4xx client errors are noise, not incidents.
+      reportError(error, { requestId, route: pattern, userId: null });
+    }
     return fail(apiError, cors);
   }
 }

@@ -41,6 +41,19 @@ export interface RouteOptions {
 // the bug that made GET / fail in tests (it pointed at dist/public).
 const PUBLIC_DIR = join(import.meta.dirname, "..", "..", "public");
 
+/**
+ * Cache policy (Layer 16): only static assets (public/*) may carry
+ * cache headers. Authenticated API responses always send
+ * cache-control: no-store via SECURITY_HEADERS, and no shared
+ * layer (CDN/proxy) may ever cache authenticated user data.
+ * max-age=600 is a conservative starting value — the filenames are
+ * not content-hashed in V1, so a short TTL bounds staleness after
+ * a deploy. Tune after real traffic (see decision 0016).
+ */
+const STATIC_CACHE_HEADERS: Record<string, string> = {
+  "cache-control": "public, max-age=600",
+};
+
 // Layer 11: one shared in-memory limiter for the deployed server.
 // route() is the only path server.ts uses, so this is where the
 // default no-op hook is replaced by real enforcement. Direct
@@ -95,6 +108,7 @@ export async function route(
         ...opts.authDeps,
         rateLimit: authRateLimit,
         appOrigin: opts.authDeps?.appOrigin ?? env.appOrigin,
+        appEnv: opts.authDeps?.appEnv ?? env.appEnv,
       },
     );
     return {
@@ -124,6 +138,7 @@ export async function route(
         rateLimiter: opts.apiDeps?.rateLimiter ?? limiter,
         clientIp: opts.apiDeps?.clientIp ?? opts.clientIp ?? null,
         appOrigin: opts.apiDeps?.appOrigin ?? env.appOrigin,
+        appEnv: opts.apiDeps?.appEnv ?? env.appEnv,
       },
     );
     return {
@@ -151,17 +166,32 @@ export async function route(
   }
   if (method === "GET" && (pathname === "/" || pathname === "/index.html")) {
     const html = await readFile(join(PUBLIC_DIR, "index.html"), "utf8");
-    return { statusCode: 200, contentType: "text/html", body: html };
+    return {
+      statusCode: 200,
+      contentType: "text/html",
+      body: html,
+      headers: { ...STATIC_CACHE_HEADERS },
+    };
   }
   if (method === "GET" && pathname === "/styles.css") {
     const css = await readFile(join(PUBLIC_DIR, "styles.css"), "utf8");
-    return { statusCode: 200, contentType: "text/css", body: css };
+    return {
+      statusCode: 200,
+      contentType: "text/css",
+      body: css,
+      headers: { ...STATIC_CACHE_HEADERS },
+    };
   }
   if (method === "GET" && pathname === "/app.js") {
     // Layer 6 frontend. Same-origin script only; it fetches /api/*
     // and nothing else (see public/app.js header + frontend tests).
     const js = await readFile(join(PUBLIC_DIR, "app.js"), "utf8");
-    return { statusCode: 200, contentType: "text/javascript", body: js };
+    return {
+      statusCode: 200,
+      contentType: "text/javascript",
+      body: js,
+      headers: { ...STATIC_CACHE_HEADERS },
+    };
   }
   return {
     statusCode: 404,

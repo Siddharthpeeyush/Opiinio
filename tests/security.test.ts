@@ -50,12 +50,23 @@ describe("log redaction — secrets can never reach the log line", () => {
         method: "POST",
         status: 401,
         userId: "user-alice",
+        durationMs: 3,
+        appEnv: "test",
       }),
     );
     const parsed = JSON.parse(out) as Record<string, unknown>;
     assert.deepEqual(
       Object.keys(parsed).sort(),
-      ["level", "method", "requestId", "route", "status", "userId"].sort(),
+      [
+        "level",
+        "method",
+        "requestId",
+        "route",
+        "status",
+        "durationMs",
+        "appEnv",
+        "userId",
+      ].sort(),
     );
   });
 
@@ -73,6 +84,8 @@ describe("log redaction — secrets can never reach the log line", () => {
         method: "POST",
         status: 401,
         userId: null,
+        durationMs: 1,
+        appEnv: "test",
       }),
     );
     void email;
@@ -90,6 +103,8 @@ describe("log redaction — secrets can never reach the log line", () => {
         method: "GET",
         status: 200,
         userId: "user-alice",
+        durationMs: 5,
+        appEnv: "test",
       }),
     );
     assert.ok(!out.includes("550e8400"), "raw id in log route");
