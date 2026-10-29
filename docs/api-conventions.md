@@ -145,6 +145,19 @@ Writes (session required): `PATCH /api/profiles/:id` (own only),
 `GET /api/notifications`, `PATCH /api/notifications/:id`
 (mark-read only).
 
+Account (privacy right): `GET /api/account/export` — the
+caller's own data only (profile, opinions incl. own
+anonymous ones, replies, votes, likes, reposts, follows both
+directions, polls with options, bookmarks, muted
+topics/words, blocks, reports, notifications). Session
+required (401 when signed out); rate-limited through the
+read bucket (429 with Retry-After); each table capped at 500
+rows, capped tables named in the `truncated` array. Never
+returns another user's rows. Account deletion is NOT this
+route: `DELETE /api/auth/account` is aal-gated and returns
+403 SERVER_ONLY (admin deletion needs a key that is never
+in this app).
+
 **Deliberately absent (no route, generic 404 if probed):**
 `POST /api/notifications`, any write to `/api/daily-questions`,
 `GET /api/profiles` (no profile list, no user search — no

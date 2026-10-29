@@ -40,6 +40,27 @@
       .replace(/'/g, "&#39;");
   }
 
+  /**
+   * Layer 10 — the MFA QR code arrives from GoTrue via the server
+   * auth routes as an SVG string. It is the only raw-HTML sink in
+   * this file, so it is allow-listed narrowly: it must be an SVG
+   * document and must carry no active content (no scripts, no
+   * event-handler attributes, no javascript:/data: URLs, no
+   * embedded HTML frames). Anything else returns null and the
+   * caller falls back to the data:image path or nothing.
+   */
+  function safeSvg(svg) {
+    if (typeof svg !== "string") return null;
+    var s = svg.trim();
+    if (s.indexOf("<svg") !== 0) return null;
+    if (/<script[\s>]/i.test(s)) return null;
+    if (/<foreignObject[\s>]/i.test(s)) return null;
+    if (/<iframe[\s>]/i.test(s)) return null;
+    if (/\son[a-z]+\s*=/i.test(s)) return null;
+    if (/javascript\s*:/i.test(s)) return null;
+    return s;
+  }
+
   function initialsFor(name) {
     var words = String(name || "")
       .trim()
@@ -2840,10 +2861,11 @@
     var enrollment = state.mfaEnrollment;
     var qrHtml = "";
     if (enrollment) {
-      if (enrollment.qrCode && enrollment.qrCode.indexOf("<svg") === 0) {
+      var qrSvg = safeSvg(enrollment.qrCode);
+      if (qrSvg !== null) {
         qrHtml =
           '<div class="qr-code" aria-label="QR code for your authenticator app">' +
-          enrollment.qrCode +
+          qrSvg +
           "</div>";
       } else if (enrollment.qrCode && enrollment.qrCode.indexOf("data:image") === 0) {
         qrHtml =

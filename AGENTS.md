@@ -206,6 +206,18 @@ include timeouts and component-level status (skill: operate-and-scale).
   decision record; no Netlify tokens/keys wired. Tests 159/159
   (`tests/secret-scanner.test.ts`, 5 new). See
   docs/decisions/0014-ci-cd-testing.md.
+- 0015 Layer 10 security review — written in code, NOT pushed:
+  `docs/security-threat-model.md` (assets, trust boundaries,
+  STRIDE-lite per entry point; open items restated, not
+  hidden), dependency audit (zero runtime deps; 6 dev-only,
+  npm audit --offline 0 vulnerabilities), log-redaction review
+  (redacted by construction in src/lib/log.ts; proven in
+  tests), `GET /api/account/export` (own data only, auth-first,
+  rate-limited, 500-row caps), XSS sweep of public/app.js
+  (all user fields esc(); the one raw sink — GoTrue QR SVG —
+  now guarded by safeSvg()); account deletion NOT built
+  (future admin layer only). See
+  docs/decisions/0015-security-review.md.
 - GitHub repo: the user creates it; GitHub Apps cannot create user
   repos via API. Push happens after the user creates it and grants the
   app access.

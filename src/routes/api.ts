@@ -47,6 +47,7 @@ import { isUuid } from "../lib/validation.js";
 import { RestStore, type Store } from "../db/store.js";
 import * as api from "../services/api.js";
 import * as api2 from "../services/api2.js";
+import { exportAccount } from "../services/export.js";
 
 export interface ApiDeps {
   /** Injected for tests; production uses verifySession + RestStore. */
@@ -120,10 +121,21 @@ async function resolveCaller(
         anonKey: "placeholder-not-a-real-key",
       });
     } else {
-      const config = getAuthConfig({
-        SUPABASE_URL: process.env.SUPABASE_URL,
-        SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
-      });
+      // Missing env is a service problem, not a client error: map
+      // it to a generic 503, mirroring makeStore below. Before this
+      // fix a presented token on an unconfigured server fell
+      // through to a misleading 500 (found by the Layer 10 export
+      // tests); the missing variable's NAME never leaves the
+      // server either way.
+      let config: AuthConfig;
+      try {
+        config = getAuthConfig({
+          SUPABASE_URL: process.env.SUPABASE_URL,
+          SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+        });
+      } catch {
+        throw unavailable();
+      }
       user = await verifySession(token, config);
     }
     if (user === null) {
@@ -274,6 +286,9 @@ function routeExists(method: string, rest: string[]): boolean {
   if (rest[0] === "notifications" && rest.length === 2 && method === "PATCH") return true;
   if (rest[0] === "daily-questions" && rest.length === 1 && method === "GET") return true;
   if (rest[0] === "daily-questions" && rest.length === 2 && method === "GET") return true;
+  // Layer 10 — account data export (own data only, auth-first).
+  if (rest[0] === "account" && rest.length === 2 && at(1, "export") && method === "GET")
+    return true;
   return false;
 }
 
@@ -690,6 +705,22 @@ async function dispatch(
     return wrap(json(200, note));
   }
 
+  // -- account (data export, privacy right) --------------------------
+  if (
+    rest[0] === "account" &&
+    rest.length === 2 &&
+    rest[1] === "export" &&
+    method === "GET"
+  ) {
+    // Auth-first (401 when signed out), own rows only, and the
+    // dispatch-level Layer 11 limiter applies: GET maps to the
+    // "read" bucket via bucketForApiRoute. The 404 above runs
+    // before auth, so a probe cannot distinguish this route's
+    // existence from an unknown path beyond its auth behaviour.
+    const data = await exportAccount(store, ctx);
+    return wrap(json(200, data));
+  }
+
   // -- daily questions (read-only for users) ---------------------------
   if (rest[0] === "daily-questions" && rest.length === 1 && method === "GET") {
     const page = await api2.listDailyQuestions(store, ctx, pageParams(query));
@@ -708,5 +739,6 @@ async function dispatch(
   // /api/daily-questions, GET /api/profiles (list), /api/docs,
   // /api/openapi, or any endpoint listing. Unknown paths fall
   // through to the generic 404 below.
+  // (GET /api/account/export is the one account-level route; see above.)
   throw new ApiError(404, "NOT_FOUND", "Not found");
 }
