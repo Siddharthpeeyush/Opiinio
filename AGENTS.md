@@ -124,6 +124,20 @@ include timeouts and component-level status (skill: operate-and-scale).
   no API route and show honest empty states; see
   docs/decisions/0012-live-list-pass.md.
 
+- 0019 Platform scope (user, 2026-10-29): web + mobile-app +
+  web admin panel (operations, insights, self-serve sponsored ads);
+  sequencing decided — web launch first, admin panel second, mobile
+  third (PWA first at ₹0, native last); assistant-added gaps:
+  analytics, admin roles, sponsored-content model, push, age gate,
+  Privacy Policy update; see
+  `docs/decisions/0019-platform-scope.md`.
+- 0020 Netlify Functions adapter (2026-10-29): Netlify free cannot
+  run the Node server — `src/functions/api.ts` wraps `route()` as a
+  serverless function, `netlify.toml` publishes `public/` and
+  200-rewrites `/api/*`; honest limitation: rate limiter is per warm
+  instance (strict per-IP buckets under-count distributed bursts);
+  see `docs/decisions/0020-netlify-functions-adapter.md`.
+
 ## What this repo is NOT
 
 - It is NOT the demo prototype artifact (`opinion-app-prototype`):
@@ -152,8 +166,12 @@ include timeouts and component-level status (skill: operate-and-scale).
   `MIGRATION-GUIDE.md`). Note: the dashboard "Last migration"
   label still reads "No migrations" — it only tracks CLI/GitHub
   integration, not SQL-Editor applies, and is not the proof.
-  Layer 4 (auth) is written in code but providers are NOT yet
-  enabled live; see `AUTH-SETUP-GUIDE.md`. Layer 5 (APIs) is
+  Layer 4 (auth) is written in code; providers went live
+  2026-10-29 — Email was already enabled (Confirm email ON), and the
+  user created the Google Cloud OAuth client himself while the
+  assistant pasted the Client ID + Secret into Supabase via browser
+  (verified Google ENABLED; the secret never appeared in chat).
+  See `AUTH-SETUP-GUIDE.md`. Layer 5 (APIs) is
   written in code (`src/services/api.ts`, `api2.ts`,
   `src/routes/api.ts`, `docs/api-conventions.md`) but has made
   no live Supabase call; see

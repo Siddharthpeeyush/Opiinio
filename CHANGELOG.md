@@ -4,6 +4,43 @@ All notable changes, newest first. One entry per layer. Dates in IST.
 
 ## Unreleased
 
+### Netlify Functions adapter (2026-10-29)
+
+- **Honest correction:** Netlify's free tier serves static files and
+  cannot run the app's long-lived Node server — the repo had no
+  `netlify.toml` and no serverless adapter, so a plain deploy could
+  not serve `/api/*`. The hosting layer documented topology without
+  verifying the runtime fits the host; that miss is fixed here.
+- Added `src/functions/api.ts`: a thin Netlify Function translating
+  Netlify HTTP events → `route()` → HTTP responses. Nothing is
+  reimplemented — routing, auth, validation, rate limiting, and
+  privacy all stay in `route()` and below. Zero runtime dependencies.
+- Added `netlify.toml`: build `npm run build`, publish `public/`,
+  functions `dist/functions`, 200-rewrite `/api/*` to the function
+  (original URL preserved).
+- Known limitation (recorded, not hidden): the in-memory rate limiter
+  is per warm function instance on serverless, so strict per-IP
+  buckets under-count distributed bursts; auth-keyed buckets are
+  unaffected in practice. The shared-store follow-up (decision 0013)
+  now covers this too.
+- Tests 200/200 (`tests/netlify-function.test.ts`, 4 new: event
+  mapping, non-API 404, env-refusal 503, base64 body decoding —
+  through the real `route()`).
+- Decision record: `docs/decisions/0020-netlify-functions-adapter.md`.
+
+### Platform scope: web + admin panel + mobile (2026-10-29)
+
+- User expanded scope: Opiinio must be web + mobile-app based, plus a
+  web-based admin panel (operations, insights, self-serve sponsored
+  ads). Sequencing decided by the user: web launch first, admin panel
+  second, mobile third (PWA first at ₹0, native last).
+- Gap analysis added by the assistant at the user's request:
+  analytics instrumentation, admin roles in the DB, sponsored-content
+  data model, push notifications, anonymous-mode abuse controls, age
+  gate, Privacy Policy update for ads/trackers, deep links, Play
+  Store listing decision.
+- Decision record: `docs/decisions/0019-platform-scope.md`.
+
 ### Polish pass (2026-10-29)
 
 - Added an inline SVG data-URI favicon (`public/index.html`): cream

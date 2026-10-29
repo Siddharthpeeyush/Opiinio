@@ -1,0 +1,16 @@
+# Opiinio on Netlify (decision 0020): the static editorial frontend is served
+# from public/ on the Netlify CDN; the API runs as a serverless function.
+# `npm run build` (tsc) runs first, so dist/functions/api.js exists before
+# the functions directory is bundled.
+[build]
+  command = "npm run build"
+  publish = "public"
+  functions = "dist/functions"
+
+# Rewrite (200, not redirect): the original /api/* URL is preserved, so the
+# function's event.path is the API path route() expects. Everything else
+# falls through to the static files in public/.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api"
+  status = 200

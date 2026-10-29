@@ -42,6 +42,20 @@ logins, his taps). Nothing here holds credentials, tokens, or keys.
   decision 0013). No sessions, uploads, or caches live in the
   process, so a redeploy loses nothing.
 
+## Runtime: the API is a serverless function (decision 0020)
+
+Netlify's free tier serves static files; it cannot run the long-lived
+Node server (`src/server.ts`). `src/functions/api.ts` is a thin adapter
+— Netlify HTTP event → `route()` → HTTP response — compiled by tsc into
+`dist/functions/`; `netlify.toml` publishes `public/` on the CDN and
+200-rewrites `/api/*` to the function (original URL preserved, so
+`event.path` is the API path `route()` expects). Honest limitation: the
+in-memory rate limiter is per warm function instance, so strict per-IP
+buckets under-count distributed bursts (auth-keyed buckets are
+unaffected in practice); the shared-store follow-up in decision 0013
+covers this. The topology above is unchanged — each Netlify site runs
+this same function with its own env vars.
+
 ## Environment variable matrix
 
 | Variable            | development (local) | staging               | production        |
@@ -87,7 +101,9 @@ staging: staging must be prod-faithful or it proves nothing.
    see `AUTH-SETUP-GUIDE.md`.
 3. In Netlify: new site from the GitHub repo; set the env vars
    from the matrix above (dashboard → Site settings →
-   Environment variables). Never commit them.
+   Environment variables). Never commit them. **After changing
+   env vars, trigger a redeploy** — Netlify bakes them in at
+   build/deploy time; the function reads `process.env`.
 4. Deploy; then `GET /api/health` → 200, `appEnv` matches the
    environment, `checks.database.status` is `not_checked`
    (honest until the live-probe layer) — never a faked `ok`.
