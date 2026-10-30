@@ -16,9 +16,9 @@ He was right. In `frontend/src/App.tsx`:
 - `FeedScreen` rendered `<Hero>` hardcoded to `PREVIEW_QUESTION` +
   `opinionCount="12.4K"` — unconditionally.
 - The right rail rendered `<OpinionMeter>` (hardcoded `PREVIEW_METER`
-  + literal `"7.2K"`/`"1.7K"`/`"3.5K"` strings), `<TrendingTopics
-  topics={TRENDING}>`, and `<SuggestedDebates debates={DEBATES}>` —
-  unconditionally, with no reference to `mode` at all.
+  - literal `"7.2K"`/`"1.7K"`/`"3.5K"` strings), `<TrendingTopics
+topics={TRENDING}>`, and `<SuggestedDebates debates={DEBATES}>` —
+    unconditionally, with no reference to `mode` at all.
 
 So a signed-in user in live mode saw sample numbers presented as real
 engagement. This violated the standing rule in `preview.ts`: sample
