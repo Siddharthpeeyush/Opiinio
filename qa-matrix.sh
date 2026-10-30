@@ -116,9 +116,11 @@ step "search" 200 "$(split "$R")" "$(sbody "$R")"
 R=$(call GET /api/daily-questions "$T1")
 step "daily questions" 200 "$(split "$R")" "$(sbody "$R")"
 
-echo "=== 13. cleanup: delete QA opinion, sign out ==="
+echo "=== 13. cleanup: delete QA opinion, unmute QA word, sign out ==="
 R=$(call DELETE /api/opinions/$OP "$T1")
 step "delete QA opinion" 204 "$(split "$R")" "$(sbody "$R")"
+R=$(call DELETE /api/muted-words/qa-spam-word "$T1")
+step "unmute QA word" 204 "$(split "$R")" "$(sbody "$R")"
 R=$(call POST /api/auth/signout "$T1")
 step "u1 signout" 200 "$(split "$R")" "$(sbody "$R")"
 R=$(call POST /api/auth/signout "$T2")

@@ -18,6 +18,7 @@
     "dev": "npm run build && node --watch dist/src/server.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "prelint": "npm --prefix frontend install --no-audit --no-fund",
     "lint": "eslint src tests frontend/src",
     "start": "node dist/src/server.js",
     "test": "npm run build && node --test dist/tests/*.test.js",

@@ -4,6 +4,20 @@ All notable changes, newest first. One entry per layer. Dates in IST.
 
 ## Unreleased
 
+### CI lint fix (2026-10-30)
+
+- The a2e2cda CI run failed at the Lint step: 583 `@typescript-eslint`
+  unsafe errors on `frontend/src`. Root cause: the workflow runs only
+  root `npm ci`, so `frontend/node_modules` (React types) was missing
+  and every React import typed as `error`. Reproduced locally by
+  removing `frontend/node_modules` (exact same 583 errors). Fix:
+  `package.json` gains a `prelint` script
+  (`npm --prefix frontend install --no-audit --no-fund`) so
+  `npm run lint` is self-sufficient in CI — same pattern the `build`
+  script already uses. The workflow file itself can't be pushed via
+  the GitHub connector (no workflows permission), hence the fix in
+  package.json instead.
+
 ### Profile chip dropdown (2026-10-30)
 
 - **Decision 0024:** fixed the accidental sign-out. The Topbar profile
