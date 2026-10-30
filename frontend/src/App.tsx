@@ -335,6 +335,24 @@ export default function App(): ReactNode {
     window.location.hash = "#/";
   }, [me]);
 
+  const liveMode = mode === "live";
+
+  // Real trending topics, derived from the loaded opinions. Only used in
+  // live mode — the rail never shows sample counts as real data.
+  // NOTE: hooks must stay above the loading early-return below, or React
+  // throws error #310 (hook count mismatch between renders).
+  const liveTrending = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const op of opinions) {
+      const t = (op.topic || "General").trim() || "General";
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, n]) => ({ name, count: String(n), up: true }));
+  }, [opinions]);
+
   if (mode === "loading") {
     return (
       <div className="loading-wrap" role="status" aria-label="Loading">
@@ -352,21 +370,6 @@ export default function App(): ReactNode {
     return <SignInScreen ctx={ctx} />;
   }
 
-  const liveMode = mode === "live";
-
-  // Real trending topics, derived from the loaded opinions. Only used in
-  // live mode — the rail never shows sample counts as real data.
-  const liveTrending = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const op of opinions) {
-      const t = (op.topic || "General").trim() || "General";
-      counts.set(t, (counts.get(t) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([name, n]) => ({ name, count: String(n), up: true }));
-  }, [opinions]);
   let screen: ReactNode;
   if (route.startsWith("#/explore")) {
     screen = <ExploreScreen ctx={ctx} />;

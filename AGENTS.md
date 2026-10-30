@@ -158,6 +158,14 @@ include timeouts and component-level status (skill: operate-and-scale).
   like, repost), no service key in the repo, self/blocked suppression,
   anonymous masking at read time; see
   `docs/decisions/0023-notification-triggers.md`.
+- 0025 No sample data as live data (2026-10-30): the feed hero and
+  right rail rendered hardcoded preview constants (PREVIEW_QUESTION,
+  PREVIEW_METER, "7.2K"/"12.4K", TRENDING, DEBATES) unconditionally —
+  a signed-in user saw fake engagement as real. Now mode-branched:
+  live mode fetches the real daily question and derives trending
+  topics from loaded opinions (meter/debates hidden until they have a
+  live source); preview mode keeps labelled samples; see
+  `docs/decisions/0025-no-sample-data-as-live.md`.
 
 ## What this repo is NOT
 
