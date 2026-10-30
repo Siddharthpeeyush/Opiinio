@@ -109,6 +109,33 @@ describe("frontend screens and states", () => {
     assert.ok(app.includes("FeedScreen"), "missing screen: FeedScreen");
   });
 
+  it("rail and hero never show sample data as live data", async () => {
+    const app = await readSrc("App.tsx");
+    // The rail must branch on liveMode: preview-only for the meter and
+    // suggested debates, real derived topics for trending in live mode.
+    assert.match(app, /liveMode \? \(/);
+    assert.match(app, /liveTrending/);
+    // FeedScreen fetches the real daily question in live mode.
+    assert.match(app, /getDailyQuestion\(\)/);
+    // The preview meter/trending/debate constants must not appear in the
+    // live branch of the rail — find the live branch and check it.
+    const railStart = app.indexOf("{showRail && (");
+    assert.ok(railStart > 0, "rail block missing");
+    const rail = app.slice(railStart, railStart + 2500);
+    const liveStart = rail.indexOf("liveMode ? (");
+    assert.ok(liveStart > 0, "live branch missing");
+    // Live branch ends at the ") : (" that opens the preview branch.
+    const previewSep = rail.indexOf(") : (", liveStart);
+    assert.ok(previewSep > liveStart, "preview separator missing");
+    const liveBranch = rail.slice(liveStart, previewSep);
+    // Live branch shows only derived trending topics, no preview constants.
+    assert.doesNotMatch(liveBranch, /PREVIEW_METER/);
+    assert.doesNotMatch(liveBranch, /PREVIEW_QUESTION/);
+    assert.doesNotMatch(liveBranch, /topics=\{TRENDING\}/);
+    assert.doesNotMatch(liveBranch, /SuggestedDebates/);
+    assert.match(liveBranch, /topics=\{liveTrending\}/);
+  });
+
   it("hash routes cover every screen", async () => {
     const app = await readSrc("App.tsx");
     for (const route of [

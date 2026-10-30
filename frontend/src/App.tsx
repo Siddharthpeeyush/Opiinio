@@ -13,9 +13,9 @@
  * as real.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { Opinion, SessionUser } from "./api";
+import type { DailyQuestion, Opinion, SessionUser } from "./api";
 import { api, clearSession, loadSession } from "./api";
 import {
   Composer,
@@ -145,24 +145,59 @@ function FeedScreen({
   onStance,
   onPost,
   onOpenPost,
+  ctx,
 }: {
   opinions: Opinion[];
   onStance: (id: string, stance: Stance) => void;
   onPost: (body: string) => void;
   onOpenPost: (id: string) => void;
+  ctx: ScreenCtx;
 }): ReactNode {
   const [tab, setTab] = useState("For You");
   const noop = useCallback(() => {}, []);
+  const live = ctx.mode === "live";
+  const [question, setQuestion] = useState<DailyQuestion | null>(null);
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    void api
+      .getDailyQuestion()
+      .then((q) => {
+        if (!cancelled) setQuestion(q);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [live]);
   return (
     <>
       <Tabs active={tab} onChange={setTab} />
-      <Hero
-        question={PREVIEW_QUESTION.body}
-        date={PREVIEW_QUESTION.date}
-        opinionCount="12.4K"
-        onJoinDebate={noop}
-        onViewAll={noop}
-      />
+      {live ? (
+        question && (
+          <Hero
+            question={question.body}
+            date={question.date}
+            opinionCount={String(
+              opinions.filter((o) => o.dailyQuestionId === question.id).length,
+            )}
+            onJoinDebate={() => {
+              window.location.hash = "#/compose";
+            }}
+            onViewAll={() => {
+              window.location.hash = "#/explore";
+            }}
+          />
+        )
+      ) : (
+        <Hero
+          question={PREVIEW_QUESTION.body}
+          date={PREVIEW_QUESTION.date}
+          opinionCount="12.4K"
+          onJoinDebate={noop}
+          onViewAll={noop}
+        />
+      )}
       <Composer initials="S" onPost={onPost} />
       {opinions.length === 0 ? (
         <div className="empty-state" role="status">
@@ -318,6 +353,20 @@ export default function App(): ReactNode {
   }
 
   const liveMode = mode === "live";
+
+  // Real trending topics, derived from the loaded opinions. Only used in
+  // live mode — the rail never shows sample counts as real data.
+  const liveTrending = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const op of opinions) {
+      const t = (op.topic || "General").trim() || "General";
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, n]) => ({ name, count: String(n), up: true }));
+  }, [opinions]);
   let screen: ReactNode;
   if (route.startsWith("#/explore")) {
     screen = <ExploreScreen ctx={ctx} />;
@@ -351,6 +400,7 @@ export default function App(): ReactNode {
         onStance={handleStance}
         onPost={handlePost}
         onOpenPost={openPost}
+        ctx={ctx}
       />
     );
   }
@@ -386,18 +436,34 @@ export default function App(): ReactNode {
       </main>
       {showRail && (
         <div className="rail">
-          <OpinionMeter
-            question={PREVIEW_QUESTION.body}
-            agree={PREVIEW_METER.agree}
-            neutral={PREVIEW_METER.neutral}
-            disagree={PREVIEW_METER.disagree}
-            agreeCount="7.2K"
-            neutralCount="1.7K"
-            disagreeCount="3.5K"
-            onViewFull={noop}
-          />
-          <TrendingTopics topics={TRENDING} onViewAll={noop} />
-          <SuggestedDebates debates={DEBATES} onViewAll={noop} onJoin={noop} />
+          {liveMode ? (
+            // Live: only real data. The meter and suggested debates have no
+            // live source yet, so they stay hidden instead of showing samples.
+            liveTrending.length > 0 && (
+              <TrendingTopics
+                topics={liveTrending}
+                onViewAll={() => {
+                  window.location.hash = "#/explore";
+                }}
+              />
+            )
+          ) : (
+            // Preview: sample content under the ModeBanner label.
+            <>
+              <OpinionMeter
+                question={PREVIEW_QUESTION.body}
+                agree={PREVIEW_METER.agree}
+                neutral={PREVIEW_METER.neutral}
+                disagree={PREVIEW_METER.disagree}
+                agreeCount="7.2K"
+                neutralCount="1.7K"
+                disagreeCount="3.5K"
+                onViewFull={noop}
+              />
+              <TrendingTopics topics={TRENDING} onViewAll={noop} />
+              <SuggestedDebates debates={DEBATES} onViewAll={noop} onJoin={noop} />
+            </>
+          )}
         </div>
       )}
     </div>
