@@ -164,6 +164,13 @@ export class RestStore implements Store {
     if (!response.ok) {
       throw new StoreError(response.status);
     }
+    // PostgREST answers DELETE (and some other writes) with 204 and an
+    // empty body — calling .json() on that throws a SyntaxError, which
+    // used to surface as a 500 on every unlike/unvote/unfollow/delete
+    // against the live database (the mock store never reproduced it).
+    if (response.status === 204) {
+      return null;
+    }
     return response.json();
   }
 
@@ -189,13 +196,27 @@ export class RestStore implements Store {
 
   async list(table: string, query: ListQuery): Promise<ListResult> {
     const extras = [...query.filters];
+    // Composite-key tables (bookmarks, follows, muted_*, blocks, votes,
+    // likes) have no id column — ordering or filtering by id makes
+    // PostgREST return 400, which used to surface as a 500 on
+    // GET /bookmarks, /muted-topics, /muted-words and /blocks live.
+    const hasId = (COLUMNS[table] ?? "").split(",").includes("id");
     if (query.cursor !== null) {
       // Descending (created_at, id): rows strictly before the cursor.
       const ts = encodeURIComponent(query.cursor.createdAt);
-      const id = encodeURIComponent(query.cursor.id);
-      extras.push(`or=(created_at.lt.${ts},and(created_at.eq.${ts},id.lt.${id}))`);
+      if (hasId) {
+        const id = encodeURIComponent(query.cursor.id);
+        extras.push(`or=(created_at.lt.${ts},and(created_at.eq.${ts},id.lt.${id}))`);
+      } else {
+        // No id tiebreaker: page on created_at alone. Rows sharing a
+        // timestamp may repeat across pages — acceptable for these
+        // small own-only lists, and documented here, not hidden.
+        extras.push(`created_at.lt.${ts}`);
+      }
     }
-    extras.push(`order=${query.order ?? "created_at.desc,id.desc"}`);
+    extras.push(
+      `order=${query.order ?? (hasId ? "created_at.desc,id.desc" : "created_at.desc")}`,
+    );
     extras.push(`limit=${query.limit + 1}`);
     const body = (await this.call(this.tableUrl(table, extras))) as Row[];
     const rows = Array.isArray(body) ? body : [];
@@ -204,9 +225,10 @@ export class RestStore implements Store {
     let nextCursor: string | null = null;
     if (hasMore && page.length > 0) {
       const last = page[page.length - 1] as Row;
-      if (typeof last.created_at === "string" && typeof last.id === "string") {
+      const lastId = hasId ? last.id : "";
+      if (typeof last.created_at === "string" && typeof lastId === "string") {
         nextCursor = Buffer.from(
-          JSON.stringify({ createdAt: last.created_at, id: last.id }),
+          JSON.stringify({ createdAt: last.created_at, id: lastId }),
           "utf8",
         ).toString("base64url");
       }

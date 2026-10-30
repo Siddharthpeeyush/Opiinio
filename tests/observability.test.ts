@@ -230,9 +230,13 @@ describe("cache headers — statics cacheable, API never", () => {
     assert.equal(result.headers?.["cache-control"], "public, max-age=600");
   });
 
-  it("GET /app.js is cacheable, GET /api/health is no-store", async () => {
+  it("GET /assets/* bundle is cacheable, GET /api/health is no-store", async () => {
     const env = loadEnv({ PORT: "3210" });
-    const js = await route("GET", "/app.js", env);
+    const home = await route("GET", "/", env);
+    const asset = home.body.match(/\/assets\/index-[^"]+\.js/);
+    assert.ok(asset, "index.html must reference a hashed bundle");
+    const js = await route("GET", asset[0], env);
+    assert.equal(js.statusCode, 200);
     assert.equal(js.headers?.["cache-control"], "public, max-age=600");
     const health = await route("GET", "/api/health", env);
     // handleHealth returns no headers of its own; the API no-store

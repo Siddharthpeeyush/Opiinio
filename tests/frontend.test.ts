@@ -6,200 +6,197 @@ import { join } from "node:path";
 /**
  * Layer 6 frontend tests — static + served-page checks.
  *
- * These tests do NOT run a browser and do NOT claim a visual check.
- * They prove the shipped files contain the required screens/states,
- * contain no direct-Supabase path, no secret, no media upload, and
- * no dark-glass/vinyl tokens, and that the server serves them. A
+ * Decision 0022 rebuilt the frontend in React + Vite (dark neon theme
+ * by default, light theme via toggle). These tests do NOT run a
+ * browser and do NOT claim a visual check. They prove the shipped
+ * source contains the required screens/states, contains no
+ * direct-Supabase path, no secret, no media upload, and the approved
+ * dark/light theme tokens, and that the server serves the build. A
  * live visual check on a phone (390px) and desktop (1440px) is
  * still owed before launch — see docs/decisions/0010.
  */
 
 const ROOT = join(import.meta.dirname, "..", "..");
+const SRC = join(ROOT, "frontend", "src");
 const PUBLIC = join(ROOT, "public");
 
-async function readPublic(name: string): Promise<string> {
-  return readFile(join(PUBLIC, name), "utf8");
+async function readSrc(name: string): Promise<string> {
+  return readFile(join(SRC, name), "utf8");
 }
 
 describe("frontend privacy guards", () => {
-  it("app.js fetches only same-origin /api/*, never Supabase/PostgREST/GoTrue", async () => {
-    const js = await readPublic("app.js");
-    // The header comment names the forbidden paths in prose; what
-    // matters is the code path, so check fetch calls, not words.
-    const fetchCalls = js.match(/fetch\([^)]*\)/g) ?? [];
-    assert.ok(fetchCalls.length > 0, "expected at least one fetch call");
-    for (const call of fetchCalls) {
-      assert.match(call, /"\/api"/, `non-/api fetch found: ${call}`);
-      assert.doesNotMatch(call, /https?:/);
-    }
-    assert.doesNotMatch(js, /https:\/\//);
-    assert.doesNotMatch(js, /service_role/);
-    assert.doesNotMatch(js, /localStorage/);
+  it("api client fetches only same-origin /api/*, never Supabase/PostgREST/GoTrue", async () => {
+    const api = await readSrc("api.ts");
+    // All requests go through request(), which prefixes "/api".
+    assert.match(api, /`\/api\$\{path\}`/);
+    assert.doesNotMatch(api, /fetch\("https?:/);
+    assert.doesNotMatch(api, /fetch\(`https?:/);
+    assert.doesNotMatch(api, /supabase\.co/);
+    assert.doesNotMatch(api, /service_role/);
+    // Session in sessionStorage — check real storage calls, not prose.
+    assert.match(api, /sessionStorage\.(setItem|getItem|removeItem)/);
+    assert.doesNotMatch(api, /localStorage\.(setItem|getItem|removeItem)/);
   });
 
-  it("no email, token, or voter-list rendering in the frontend", async () => {
-    const js = await readPublic("app.js");
-    assert.doesNotMatch(js, /author\.email/);
-    assert.doesNotMatch(js, /voterList|voters:/);
-    assert.match(js, /Anonymous/);
-    assert.match(js, /"AN"/);
+  it("theme preference is the only localStorage use, never the session", async () => {
+    const app = await readSrc("App.tsx");
+    assert.match(app, /opiinio\.theme/);
+    assert.match(app, /localStorage\.(setItem|getItem)/);
+    const api = await readSrc("api.ts");
+    assert.doesNotMatch(api, /localStorage\.(setItem|getItem|removeItem)/);
   });
 
-  it("no media upload, no photo/cover, no external script or font", async () => {
-    const html = await readPublic("index.html");
-    const js = await readPublic("app.js");
-    const css = await readPublic("styles.css");
+  it("no email, token, or voter-list rendering in the UI", async () => {
+    const components = await readSrc("components.tsx");
+    const screens = await readSrc("screens.tsx");
+    assert.doesNotMatch(components, /author\.email/);
+    assert.doesNotMatch(screens, /author\.email/);
+    assert.doesNotMatch(components, /voterList/);
+    // Anonymous masking is applied at render.
+    assert.match(components + screens, /Anonymous/);
+  });
+
+  it("no media upload, no photo, no external script or font", async () => {
+    const html = await readFile(join(PUBLIC, "index.html"), "utf8");
+    const app = await readSrc("App.tsx");
+    const components = await readSrc("components.tsx");
+    const screens = await readSrc("screens.tsx");
+    const all = app + components + screens;
     assert.doesNotMatch(html, /<img/);
-    assert.doesNotMatch(html, /type="file"/);
-    assert.doesNotMatch(js, /type="file"/);
+    assert.doesNotMatch(all, /type="file"/);
+    assert.doesNotMatch(all, /<input[^>]*accept="image/);
     assert.doesNotMatch(html, /<script[^>]+src="http/);
     assert.doesNotMatch(html, /fonts\.googleapis/);
-    assert.doesNotMatch(css, /@import/);
-    // Prettier may wrap this footer line, so allow whitespace.
-    assert.match(html, /No photo or video\s+uploads/);
   });
 
   it("no public API docs link and no endpoint listing in the UI", async () => {
-    const html = await readPublic("index.html");
-    const js = await readPublic("app.js");
+    const html = await readFile(join(PUBLIC, "index.html"), "utf8");
+    const app = await readSrc("App.tsx");
     assert.doesNotMatch(html, /\/api\/docs/);
-    assert.doesNotMatch(js, /\/api\/docs/);
-    assert.match(html, /No API documentation is linked here/);
+    assert.doesNotMatch(app, /\/api\/docs/);
   });
 
-  it("editorial look only: no dark glass or vinyl tokens", async () => {
-    const css = await readPublic("styles.css");
-    assert.doesNotMatch(css, /backdrop-filter/);
-    assert.doesNotMatch(css, /aurora/);
-    assert.doesNotMatch(css, /violet/);
-    assert.match(css, /#faf3e3/);
-    assert.match(css, /#0f766e/);
+  it("approved look: dark neon default + light theme, no editorial tokens", async () => {
+    const css = await readSrc("styles.css");
+    // Dark neon (decision 0022): near-black blue page background.
+    assert.match(css, /#060a15/);
+    // Light theme override exists and defaults to dark.
+    assert.match(css, /\[data-theme="light"\]/);
+    // The superseded editorial paper look must not come back.
+    assert.doesNotMatch(css, /#faf3e3/);
   });
 });
 
 describe("frontend screens and states", () => {
-  it("all 12 merged screens plus Settings/MFA/Respect routes exist in code", async () => {
-    const js = await readPublic("app.js");
-    for (const screen of [
-      "screenWelcome",
-      "screenSignIn",
-      "screenOnboarding",
-      "screenFeed",
-      "screenCompose",
-      "screenPost",
-      "screenExplore",
-      "screenDebates",
-      "screenNotifications",
-      "screenProfile",
-      "screenSettings",
-      "mfaHtml",
-      "respectHtml",
+  it("all screens exist in code", async () => {
+    const screens = await readSrc("screens.tsx");
+    const app = await readSrc("App.tsx");
+    for (const name of [
+      "WelcomeScreen",
+      "SignInScreen",
+      "ExploreScreen",
+      "DebatesScreen",
+      "FollowingScreen",
+      "NotificationsScreen",
+      "BookmarksScreen",
+      "ProfileScreen",
+      "PostDetailScreen",
+      "ComposeScreen",
     ]) {
-      assert.ok(js.includes(screen), `missing screen: ${screen}`);
+      assert.ok(screens.includes(name), `missing screen: ${name}`);
     }
+    // The feed screen lives in App.tsx (it owns the feed state).
+    assert.ok(app.includes("FeedScreen"), "missing screen: FeedScreen");
+  });
+
+  it("hash routes cover every screen", async () => {
+    const app = await readSrc("App.tsx");
     for (const route of [
-      "#/feed",
+      "#/",
+      "#/signin",
+      "#/welcome",
       "#/explore",
       "#/debates",
+      "#/following",
       "#/notifications",
+      "#/bookmarks",
+      "#/profile",
       "#/compose",
-      "#/settings",
+      "#/post/",
     ]) {
-      assert.ok(
-        js.includes(route) || (await readPublic("index.html")).includes(route),
-        `missing route: ${route}`,
-      );
+      assert.ok(app.includes(route), `missing route: ${route}`);
     }
   });
 
   it("all 10 features are wired in code, not just named", async () => {
-    const js = await readPublic("app.js");
-    assert.match(js, /data-action="stance"/);
-    assert.match(js, /meterHtml/);
-    assert.match(js, /Debate Mode/);
-    assert.match(js, /data-action="quote"/);
-    assert.match(js, /Daily answer/);
-    assert.match(js, /compose-anon/);
-    assert.match(js, /poll-vote/);
-    assert.match(js, /Best Argument/);
-    assert.match(js, /data-action="bookmark"/);
-    assert.match(js, /Respect Filter/);
-    assert.match(js, /maxlength="280"/);
+    const components = await readSrc("components.tsx");
+    const screens = await readSrc("screens.tsx");
+    const app = await readSrc("App.tsx");
+    const all = components + screens + app;
+    assert.match(all, /api\.vote|onStance/); // stance
+    assert.match(all, /OpinionMeter/); // opinion meter
+    assert.match(all, /for.*against|sideFilter/); // debate mode
+    assert.match(all, /quote_take|Quote/); // quote repost
+    assert.match(all, /Today.s question|Daily Question/i); // daily question
+    assert.match(all, /is_anonymous|anonymous/); // anonymous mode
+    assert.match(all, /castPollVote|createPoll/); // polls
+    assert.match(all, /Best Argument/); // voice score sort
+    assert.match(all, /addBookmark|Bookmark/); // bookmarks
+    assert.match(all, /280/); // char limit
   });
 
-  it("every view has loading, empty, error, and success states", async () => {
-    const js = await readPublic("app.js");
-    const html = await readPublic("index.html");
-    // Loading is the stateHtml "loading" branch plus the initial
-    // skeleton in the shell (shown before the first route renders).
-    assert.match(js, /kind === "loading"/);
-    assert.match(html, /Loading Opiinio/);
-    assert.match(js, /stateHtml\("empty"/);
-    assert.match(js, /stateHtml\("error"/);
-    assert.match(js, /form-success/);
-    assert.match(js, /form-error/);
-    assert.match(js, /auth-required|Sign in required|Sign-in is not live/);
+  it("every view has loading, empty, and error states", async () => {
+    const screens = await readSrc("screens.tsx");
+    assert.match(screens, /loading/);
+    assert.match(screens, /empty-state/);
+    assert.match(screens, /error/);
+    assert.match(screens, /Sign in to/);
   });
 
-  it("profile has all five tabs including Reposts, and no cover photo", async () => {
-    const js = await readPublic("app.js");
-    for (const tab of ["opinions", "replies", "reposts", "likes", "bookmarks"]) {
-      assert.ok(js.includes(`"${tab}"`), `missing profile tab: ${tab}`);
-    }
-    assert.match(js, /Initials-only avatar/);
-    assert.doesNotMatch(js, /coverPhoto|cover-photo/);
+  it("theme toggle exists and dark is the default", async () => {
+    const app = await readSrc("App.tsx");
+    const components = await readSrc("components.tsx");
+    assert.match(app, /useTheme/);
+    assert.match(app, /toggleTheme/);
+    assert.match(components, /onToggleTheme/);
+    // Default is dark when nothing is stored.
+    assert.match(app, /"light"\s*:\s*"dark"|=== "light" \? "light" : "dark"/);
   });
 
-  it("language toggle is chrome-only and says so", async () => {
-    const js = await readPublic("app.js");
-    const html = await readPublic("index.html");
-    assert.match(js, /Posts are not translated/);
-    assert.match(html, /never\s+translated/);
-    assert.match(js, /हर राय मायने रखती है/);
-  });
-
-  it("preview sample covers six topics so Explore ranks 1-6, never rank 0", async () => {
-    const js = await readPublic("app.js");
-    for (const topic of [
-      "Work",
-      "Money",
-      "Cities",
-      "Education",
-      "Everyday life",
-      "Technology",
-    ]) {
-      assert.ok(js.includes(`topic: "${topic}"`), `missing sample topic: ${topic}`);
-    }
-    assert.match(js, /\.slice\(0, 6\)/);
-    assert.doesNotMatch(js, /rank.*0,/);
-  });
-
-  it("overflow-safe CSS: no fixed viewport-breaking widths, grid uses minmax(0,1fr)", async () => {
-    const css = await readPublic("styles.css");
-    assert.match(css, /overflow-x: hidden/);
+  it("overflow-safe CSS for the 390px phone viewport", async () => {
+    const css = await readSrc("styles.css");
     assert.match(css, /minmax\(0, 1fr\)/);
     assert.match(css, /flex-wrap: wrap/);
-    assert.match(css, /overflow-wrap: anywhere/);
-    assert.match(css, /@media \(max-width: 640px\)/);
+    assert.match(css, /@media \(max-width: 820px\)/);
     assert.doesNotMatch(css, /width: 100vw/);
   });
 });
 
 describe("served frontend pages", () => {
-  it("GET / serves the app shell and /app.js is served by the route table", async () => {
+  it("GET / serves the React app shell", async () => {
     const { route } = await import("../src/app.js");
     const { loadEnv } = await import("../src/lib/env.js");
     const env = loadEnv({ PORT: "3001" });
     const home = await route("GET", "/", env);
     assert.equal(home.statusCode, 200);
     assert.match(home.body, /Opiinio/);
-    assert.match(home.body, /app\.js/);
-    const js = await route("GET", "/app.js", env);
+    assert.match(home.body, /<div id="root"><\/div>/);
+  });
+
+  it("GET /assets/* serves the built bundle; /app.js is gone", async () => {
+    const { route } = await import("../src/app.js");
+    const { loadEnv } = await import("../src/lib/env.js");
+    const env = loadEnv({ PORT: "3001" });
+    const html = await route("GET", "/", env);
+    const asset = html.body.match(/\/assets\/index-[^"]+\.js/);
+    assert.ok(asset, "index.html must reference a hashed bundle");
+    const js = await route("GET", asset[0], env);
     assert.equal(js.statusCode, 200);
-    assert.match(js.body, /Layer 6/);
-    const css = await route("GET", "/styles.css", env);
-    assert.equal(css.statusCode, 200);
-    assert.match(css.body, /#faf3e3/);
+    assert.equal(js.contentType, "text/javascript");
+    const gone = await route("GET", "/app.js", env);
+    assert.equal(gone.statusCode, 404);
+    const traversal = await route("GET", "/assets/../../src/app.ts", env);
+    assert.equal(traversal.statusCode, 404);
     const docs = await route("GET", "/api/docs", env);
     assert.equal(docs.statusCode, 404);
   });

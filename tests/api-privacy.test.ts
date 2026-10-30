@@ -425,4 +425,63 @@ describe("secrets and data minimisation (source checks)", () => {
     assert.ok(url.includes("id.lt."));
     assert.ok(url.includes("limit=21"));
   });
+
+  it("RestStore removeBy tolerates PostgREST 204 with an empty body", async () => {
+    // Live bug 2026-10-30: every unlike/unvote/unfollow/delete 500ed
+    // because call() ran response.json() on the empty 204 body and the
+    // SyntaxError surfaced as INTERNAL_ERROR. The mock store never
+    // reproduced it.
+    const store = new RestStore(
+      {
+        supabaseUrl: "https://example.supabase.co",
+        anonKey: "placeholder-not-a-real-key",
+      },
+      "caller-token-123",
+      (() =>
+        Promise.resolve({
+          ok: true,
+          status: 204,
+          json: () => Promise.reject(new SyntaxError("Unexpected end of JSON input")),
+        })) as never,
+    );
+    const removed = await store.removeBy("opinion_likes", [
+      eqFilter("user_id", "user-alice"),
+      eqFilter("opinion_id", "op-1"),
+    ]);
+    assert.equal(removed, true);
+  });
+
+  it("RestStore list on composite-key tables never orders or pages by id", async () => {
+    // Live bug 2026-10-30: GET /bookmarks 500ed because list() always
+    // appended id.desc, but bookmarks/muted_*/blocks/follows have no id
+    // column (PostgREST 400).
+    for (const table of ["bookmarks", "muted_topics", "muted_words", "blocks"]) {
+      const seen: string[] = [];
+      const store = new RestStore(
+        {
+          supabaseUrl: "https://example.supabase.co",
+          anonKey: "placeholder-not-a-real-key",
+        },
+        null,
+        ((url: string) => {
+          seen.push(url);
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve([]),
+          });
+        }) as never,
+      );
+      await store.list(table, {
+        filters: [eqFilter("user_id", "user-alice")],
+        cursor: { createdAt: "2026-10-02T00:00:00.000Z", id: "" },
+        limit: 20,
+      });
+      const url = seen[0] as string;
+      assert.ok(!url.includes("id.desc"), `${table}: ${url}`);
+      assert.ok(!url.includes("id.lt."), `${table}: ${url}`);
+      assert.ok(url.includes("order=created_at.desc"), `${table}: ${url}`);
+      assert.ok(url.includes("created_at.lt."), `${table}: ${url}`);
+    }
+  });
 });

@@ -20,9 +20,10 @@ from paywalling the core.
 - App shape: modular monolith — one deployable app, business logic in
   `src/services/`, thin route handlers in `src/routes/`, never business
   logic in UI components or route handlers.
-- Frontend: static editorial-paper pages served by the same app for V1
-  (warm cream background, black ink serif headlines, speech-bubble cards
-  in teal/coral, balance-scale / tug-of-war Agree–Disagree meter).
+- Frontend: React 19 + Vite + TypeScript single-page app (decision 0022),
+  dark neon theme by default with a light theme toggle (both approved by
+  the user from his mockups). Build output goes to `public/`; the old
+  vanilla `public/app.js` / `styles.css` are gone.
   Hosting: Netlify free at launch.
 - Backend / database / auth: Supabase free (Postgres + Supabase Auth).
   No hand-rolled password hashing or session logic. Google + email auth

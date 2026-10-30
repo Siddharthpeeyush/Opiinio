@@ -4,7 +4,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { EnvConfig } from "./lib/env.js";
 import { handleHealth, handleLive } from "./routes/health.js";
 import { handleApi, type ApiDeps } from "./routes/api.js";
@@ -182,25 +182,41 @@ export async function route(
       headers: { ...STATIC_CACHE_HEADERS },
     };
   }
-  if (method === "GET" && pathname === "/styles.css") {
-    const css = await readFile(join(publicDir(), "styles.css"), "utf8");
-    return {
-      statusCode: 200,
-      contentType: "text/css",
-      body: css,
-      headers: { ...STATIC_CACHE_HEADERS },
-    };
-  }
-  if (method === "GET" && pathname === "/app.js") {
-    // Layer 6 frontend. Same-origin script only; it fetches /api/*
-    // and nothing else (see public/app.js header + frontend tests).
-    const js = await readFile(join(publicDir(), "app.js"), "utf8");
-    return {
-      statusCode: 200,
-      contentType: "text/javascript",
-      body: js,
-      headers: { ...STATIC_CACHE_HEADERS },
-    };
+  // Decision 0022 (React + Vite build): the bundle lives at
+  // /assets/index-*.{js,css}. Serve those static files; the old
+  // /app.js and /styles.css routes are gone with the vanilla app.
+  if (method === "GET" && pathname.startsWith("/assets/")) {
+    const root = publicDir();
+    const resolved = resolve(join(root, pathname));
+    if (resolved !== root && !resolved.startsWith(root + sep)) {
+      return {
+        statusCode: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "NOT_FOUND", message: "Not found" } }),
+        headers: { ...SECURITY_HEADERS },
+      };
+    }
+    try {
+      const data = await readFile(resolved, "utf8");
+      const contentType = pathname.endsWith(".js")
+        ? "text/javascript"
+        : pathname.endsWith(".css")
+          ? "text/css"
+          : "application/octet-stream";
+      return {
+        statusCode: 200,
+        contentType,
+        body: data,
+        headers: { ...STATIC_CACHE_HEADERS },
+      };
+    } catch {
+      return {
+        statusCode: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "NOT_FOUND", message: "Not found" } }),
+        headers: { ...SECURITY_HEADERS },
+      };
+    }
   }
   return {
     statusCode: 404,

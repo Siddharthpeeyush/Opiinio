@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { join, sep } from "node:path";
 import type { AuthUser } from "../src/lib/auth.js";
 import { logRequest } from "../src/lib/log.js";
 import { handleApi, type ApiDeps } from "../src/routes/api.js";
@@ -356,38 +356,46 @@ describe("GET /api/account/export — own data only", () => {
 });
 
 // ---------------------------------------------------------------- QR SVG sanitizer
+//
+// The vanilla frontend (public/app.js) used safeSvg() around the GoTrue
+// MFA QR string — the one raw-HTML sink. Decision 0022 rebuilt the
+// frontend in React, which has no QR display at all: mfaEnroll is still
+// typed in the API client but no screen calls it, and React is never
+// handed raw HTML. These tests guard the new invariant at the source
+// level instead of reading a bundle that no longer exists.
 
-describe("safeSvg — the one raw-HTML sink (MFA QR from GoTrue)", () => {
-  it("safeSvg exists and the QR injection path uses it", async () => {
-    const js = await readFile(join(ROOT, "public", "app.js"), "utf8");
-    assert.match(js, /function safeSvg\(svg\)/);
-    assert.match(js, /var qrSvg = safeSvg\(enrollment\.qrCode\)/);
-    // No raw injection of the GoTrue-provided QR string anywhere.
-    assert.doesNotMatch(js, /\+\s*enrollment\.qrCode\s*\+/);
+describe("react frontend — no raw-HTML injection sinks", () => {
+  const SRC = join(ROOT, "frontend", "src");
+
+  async function srcFiles(): Promise<string[]> {
+    const out: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) await walk(full);
+        else if (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts"))
+          out.push(full);
+      }
+    };
+    await walk(SRC);
+    return out;
+  }
+
+  it("no dangerouslySetInnerHTML or innerHTML assignments in app source", async () => {
+    for (const file of await srcFiles()) {
+      const text = await readFile(file, "utf8");
+      assert.doesNotMatch(text, /dangerouslySetInnerHTML/, `${file} injects raw HTML`);
+      assert.doesNotMatch(text, /\.innerHTML\s*=/, `${file} injects raw HTML`);
+    }
   });
 
-  it("safeSvg rejects active content and non-SVG input", async () => {
-    const js = await readFile(join(ROOT, "public", "app.js"), "utf8");
-    const match = js.match(/function safeSvg\(svg\) \{\n[\s\S]*?\n {2}\}/);
-    assert.ok(match, "safeSvg source not found in app.js");
-    // The shipped source is evaluated (not a copy), so this test
-    // runs the real function: if safeSvg moves or is renamed, the
-    // match above fails loudly first. new Function is deliberate
-    // here — it is test-only, evaluating code from this same repo.
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const makeSafeSvg = new Function(`${match[0]}; return safeSvg;`) as () => (
-      svg: unknown,
-    ) => string | null;
-    const safeSvg = makeSafeSvg();
-    const good = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10"/></svg>';
-    assert.equal(safeSvg(good), good.trim());
-    assert.equal(safeSvg("<svg><script>alert(1)</script></svg>"), null);
-    assert.equal(safeSvg('<svg><rect onload="alert(1)"/></svg>'), null);
-    assert.equal(safeSvg('<svg><a href="javascript:alert(1)">x</a></svg>'), null);
-    assert.equal(safeSvg("<svg><foreignObject><div>x</div></foreignObject></svg>"), null);
-    assert.equal(safeSvg('<svg><iframe src="https://evil.example"/></svg>'), null);
-    assert.equal(safeSvg("<div>not svg</div>"), null);
-    assert.equal(safeSvg(null), null);
-    assert.equal(safeSvg(42), null);
+  it("no GoTrue QR-code rendering path in the UI", async () => {
+    // mfaEnroll may stay typed in the API client, but no screen may
+    // call it — there is no QR SVG to sanitize because none is shown.
+    for (const file of await srcFiles()) {
+      if (file.endsWith(`${sep}api.ts`)) continue;
+      const text = await readFile(file, "utf8");
+      assert.doesNotMatch(text, /mfaEnroll|mfaChallenge|mfaVerify|qrCode/, `${file}`);
+    }
   });
 });

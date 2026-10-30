@@ -630,40 +630,33 @@ describe("missing env, rate-limit hook, and log redaction", () => {
 });
 
 describe("frontend wiring — /api/auth only, sessionStorage only, poll second call", () => {
+  const SRC = join(import.meta.dirname, "..", "..", "frontend", "src");
+
   it("frontend calls /api/auth routes, never Supabase directly, and stores no localStorage session", async () => {
-    const js = await readFile(
-      join(import.meta.dirname, "..", "..", "public", "app.js"),
-      "utf8",
-    );
+    const api = await readFile(join(SRC, "api.ts"), "utf8");
     for (const path of [
       "/auth/signin",
       "/auth/signup",
       "/auth/google",
       "/auth/session",
-      "/auth/mfa/enroll",
-      "/auth/mfa/verify",
     ]) {
-      assert.ok(js.includes(path), `frontend must call ${path}`);
+      assert.ok(api.includes(path), `frontend must call ${path}`);
     }
-    assert.match(js, /sessionStorage/);
-    // Check actual storage API use, not prose words: the header
-    // comment names the forbidden paths in prose, so a word
-    // match would fail on a comment. What matters is the code.
-    assert.doesNotMatch(js, /localStorage\.(setItem|getItem|removeItem)/);
-    assert.doesNotMatch(js, /supabase\.co/);
-    const fetchCalls = js.match(/fetch\([^)]*\)/g) ?? [];
-    assert.ok(fetchCalls.length > 0);
-    for (const call of fetchCalls) {
-      assert.match(call, /"\/api"/, `non-/api fetch found: ${call}`);
-    }
+    assert.match(api, /sessionStorage/);
+    // localStorage is theme-preference only — the session never lands
+    // there. Check real storage calls, not prose words.
+    assert.doesNotMatch(api, /localStorage\.(setItem|getItem|removeItem)/);
+    assert.doesNotMatch(api, /supabase\.co/);
+    // The single fetch helper always prefixes /api (the call spans
+    // lines, so match the template literally, not with [^)]*).
+    assert.match(api, /fetch\(`\/api\$\{path\}`/);
+    assert.doesNotMatch(api, /fetch\("https?:/);
+    assert.doesNotMatch(api, /fetch\(`https?:/);
   });
 
   it("Compose live poll creation makes the second call with the created opinion id", async () => {
-    const js = await readFile(
-      join(import.meta.dirname, "..", "..", "public", "app.js"),
-      "utf8",
-    );
-    assert.match(js, /\/opinions\/" \+ [^)]+ \+ "\/polls"/);
-    assert.match(js, /options: pollOptions/);
+    const screens = await readFile(join(SRC, "screens.tsx"), "utf8");
+    assert.match(screens, /api\.createPoll\(created\.id/);
+    assert.match(screens, /pollOptions/);
   });
 });

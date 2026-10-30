@@ -14,11 +14,11 @@
   "name": "opiinio",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm --prefix frontend install --no-audit --no-fund && npm --prefix frontend run build",
     "dev": "npm run build && node --watch dist/src/server.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint src tests",
+    "lint": "eslint src tests frontend/src",
     "start": "node dist/src/server.js",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"

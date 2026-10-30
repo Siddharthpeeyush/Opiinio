@@ -1,8 +1,10 @@
-# Opiinio on Netlify (decision 0020): the static editorial frontend is served
-# from public/ on the Netlify CDN; the API runs as a serverless function.
-# `npm run build` (tsc, rootDir ".") compiles src/functions/api.ts into
-# dist/src/functions/api.js, so the functions directory must point there —
-# dist/functions does NOT exist (that was a shipped bug, fixed here).
+# Opiinio on Netlify (decisions 0020, 0022): the React frontend (frontend/,
+# Vite) is built into public/ and served from the Netlify CDN; the API runs
+# as a serverless function. `npm run build` runs tsc (rootDir ".") which
+# compiles src/functions/api.ts into dist/src/functions/api.js — the
+# functions directory must point there (dist/functions does NOT exist;
+# that was a shipped bug, fixed in 0020) — then installs frontend deps and
+# runs the Vite build into public/.
 [build]
   command = "npm run build"
   publish = "public"

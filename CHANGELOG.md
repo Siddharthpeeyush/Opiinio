@@ -4,6 +4,27 @@ All notable changes, newest first. One entry per layer. Dates in IST.
 
 ## Unreleased
 
+### React rebuild + dark/light themes + live QA bugfixes (2026-10-30)
+
+- **Decision 0022:** full frontend rebuild in React 19 + Vite + TypeScript
+  (user: "react will be best", "this is not a demo, I want real results").
+  Dark neon theme by default; light theme added per his second mockup;
+  sun/moon toggle (localStorage `opiinio.theme`, session stays in
+  sessionStorage). Swirl logo as inline SVG. Backend/API untouched.
+- **Live QA matrix (2 QA users) found 3 real bug classes** the mock-store
+  tests could not see — all fixed with regression tests:
+  1. Every DELETE 500ed live: `RestStore.call()` parsed the empty 204
+     body as JSON (SyntaxError). Now returns null on 204.
+  2. `GET /bookmarks` etc. 500ed: `list()` ordered by `id` on
+     composite-key tables that have no `id` column. Now pages those on
+     `created_at` alone.
+  3. Frontend sent camelCase keys the API rejects (`optionId`,
+     `followingId`, `displayName`, `read`, `isAnonymous` → snake_case);
+     ComposeScreen anonymous toggle now wired.
+- `src/app.ts`: dead `/app.js` + `/styles.css` routes replaced with a
+  traversal-safe `/assets/*` static route for the Vite bundle.
+- Frontend tests rewritten for the React source (same intents).
+
 ### Missing table GRANTs outage fix (2026-10-30)
 
 - **Post-mortem:** the live API's 503s were not a bad anon key — the

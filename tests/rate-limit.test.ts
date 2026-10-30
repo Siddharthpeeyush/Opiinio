@@ -398,49 +398,24 @@ describe("route() production wiring — limiter flows into both route families",
   });
 });
 
-describe("reply-like — live mode calls the API, preview mode keeps the toast (static)", () => {
-  const sourcePath = join(process.cwd(), "public", "app.js");
+describe("reply-like — live mode calls the API, signed-out is gated (static)", () => {
+  const apiPath = join(process.cwd(), "frontend", "src", "api.ts");
+  const screensPath = join(process.cwd(), "frontend", "src", "screens.tsx");
 
-  it("preview branch keeps the exact preview toast", async () => {
-    const source = await readFile(sourcePath, "utf8");
-    assert.ok(
-      source.includes(
-        'if (action === "reply-like") {\n      if (isPreview()) {\n        showToast("Preview only — reply likes are local in preview and are not saved.");',
-      ),
-      "the preview toast branch must stay exactly as it was",
-    );
+  it("api client maps like/unlike to POST/DELETE /replies/:id/like", async () => {
+    const api = await readFile(apiPath, "utf8");
+    assert.match(api, /likeReply[\s\S]*?method: "POST"/);
+    assert.match(api, /unlikeReply[\s\S]*?method: "DELETE"/);
+    assert.match(api, /\/replies\/\$\{replyId\}\/like/);
   });
 
-  it("live branch calls POST/DELETE /replies/:id/like by ownLiked, then refetches from the server", async () => {
-    const source = await readFile(sourcePath, "utf8");
-    assert.ok(
-      source.includes('await api("/replies/" + replyId + "/like", {'),
-      "live mode calls the live like endpoint",
-    );
-    assert.ok(
-      source.includes('method: liveReply && liveReply.ownLiked ? "DELETE" : "POST"'),
-      "unlike uses DELETE, like uses POST, chosen from the server-known ownLiked flag",
-    );
-    assert.ok(
-      source.includes("liveReply = (state.livePostReplies || []).find"),
-      "ownLiked is read from the server-fetched reply view, not from a preview guess",
-    );
-    // The count is refreshed by re-rendering (route() refetches the
-    // post from the server), never by local arithmetic.
-    const branch = source.slice(source.indexOf('if (action === "reply-like")'));
-    assert.ok(branch.includes("route();"), "live branch refetches after the call");
-  });
-
-  it("live branch shows the generic error state on failure", async () => {
-    const source = await readFile(sourcePath, "utf8");
-    const branch = source.slice(source.indexOf('if (action === "reply-like")'));
-    assert.ok(
-      branch.includes('"Could not save your like."'),
-      "failures show the generic error toast, not the preview toast",
-    );
-    assert.ok(
-      branch.includes('"Sign in required to like."'),
-      "a 401 in live mode says sign in is required",
-    );
+  it("PostDetailScreen gates reply likes on sign-in and toggles by ownLiked", async () => {
+    const screens = await readFile(screensPath, "utf8");
+    // Signed-out users cannot like: the handler returns early.
+    assert.match(screens, /if \(ctx\.me === null\) return;/);
+    // Like vs unlike is chosen from the server-known ownLiked flag.
+    assert.match(screens, /liked \? api\.unlikeReply\(id\) : api\.likeReply\(id\)/);
+    // The voice score updates optimistically from the toggled flag.
+    assert.match(screens, /ownLiked: !liked/);
   });
 });

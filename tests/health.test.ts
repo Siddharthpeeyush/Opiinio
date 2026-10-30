@@ -81,14 +81,14 @@ describe("health endpoints", () => {
     }
   });
 
-  it("GET / returns the editorial landing page", async () => {
+  it("GET / returns the React app shell", async () => {
     const { port, close } = await startTestServer();
     try {
       const res = await fetch(`http://localhost:${port}/`);
       assert.equal(res.status, 200);
       const text = await res.text();
       assert.match(text, /Opiinio/);
-      assert.match(text, /EVERY OPINION MATTERS/);
+      assert.match(text, /every opinion matters/i);
     } finally {
       await close();
     }
