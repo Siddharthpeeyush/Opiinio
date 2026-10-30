@@ -4,6 +4,26 @@ All notable changes, newest first. One entry per layer. Dates in IST.
 
 ## Unreleased
 
+### Profile chip dropdown (2026-10-30)
+
+- **Decision 0024:** fixed the accidental sign-out. The Topbar profile
+  chip looked like a menu (avatar + name + ▾) but signed out on a
+  single tap — the user logged himself out 46s after a successful
+  Google sign-in (proven via auth logs). The chip now opens a real
+  menu: My profile / Sign out. Rule: no destructive action on a single
+  tap from a control that looks like a menu.
+
+### Notification triggers (2026-10-30)
+
+- **Decision 0023:** notifications are now created by Postgres triggers
+  (migration `20261030070000_notification_triggers.sql`), not by the API
+  and with no service key in the repo — five `SECURITY DEFINER`
+  functions (follow, reply, opinion like, reply like, repost), fixed
+  `search_path`, self/blocked-actor suppression, direct execution
+  revoked from anon/authenticated. Anonymous masking stays at read
+  time. `GET /api/notifications?type=` accepts the new event types.
+  Poll votes stay quiet. Tests 217/217 (14 new).
+
 ### React rebuild + dark/light themes + live QA bugfixes (2026-10-30)
 
 - **Decision 0022:** full frontend rebuild in React 19 + Vite + TypeScript

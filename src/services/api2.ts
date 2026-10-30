@@ -593,8 +593,10 @@ export async function listNotifications(
   }
   const filters: string[] = [eqFilter("user_id", user.id)];
   if (params.type !== undefined) {
-    if (!["mention", "reply", "update"].includes(params.type)) {
-      throw badRequest("type must be mention, reply, or update");
+    if (
+      !["follow", "reply", "like", "repost", "mention", "update"].includes(params.type)
+    ) {
+      throw badRequest("type must be follow, reply, like, repost, mention, or update");
     }
     filters.push(eqFilter("type", params.type));
   }
@@ -653,9 +655,10 @@ export async function markNotificationRead(
 
 /**
  * SERVER-ONLY STUB — deliberately not routed, not implemented.
- * Notifications are created by the server in a later layer with a
- * server key that must never be stored in this repo. Calling this
- * function in Layer 5 is a bug: it throws, so no code path can
+ * Notifications are created by Postgres triggers (migration 07,
+ * decision 0023), not by the API: the trigger functions are
+ * SECURITY DEFINER, so no service key ever lives in this repo.
+ * Calling this function is a bug: it throws, so no code path can
  * mistake the stub for a working creation path.
  */
 export function createNotificationServerOnly(): never {

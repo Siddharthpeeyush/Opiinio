@@ -44,8 +44,9 @@ from paywalling the core.
    `docs/decisions/0005-no-team-invites-v1.md`).
 4. ₹0 launch: no paid API, no SMS OTP, no paid dependency. Free tiers
    only (Netlify free, Supabase free). Billing alerts before any upgrade.
-5. Look: light editorial paper only. Do NOT use the Waxline dark
-   vinyl-press look or the dark Liquid Glass look.
+5. Look: dark neon by default with a light-theme toggle (decision 0022;
+   both themes came from the user's own mockups). Do NOT use the Waxline
+   dark vinyl-press look or the dark Liquid Glass look.
 6. Money, when premium arrives later: integer minor units (paise), never
    floats. Not in V1 scope.
 7. Secrets: never in code, never in git history. `.env.example` holds
@@ -138,6 +139,25 @@ include timeouts and component-level status (skill: operate-and-scale).
   200-rewrites `/api/*`; honest limitation: rate limiter is per warm
   instance (strict per-IP buckets under-count distributed bursts);
   see `docs/decisions/0020-netlify-functions-adapter.md`.
+- 0021 Grants fix (2026-10-30): migrations 01–05 never GRANTed table
+  privileges to anon/authenticated (Postgres 42501 → PostgREST 401 →
+  app 503 on every /api call). Migration 06
+  `20261030060000_grants.sql` + ALTER DEFAULT PRIVILEGES; applied
+  live and verified with an unauthenticated read; see
+  `docs/decisions/0021-grants-outage.md`.
+- 0022 React frontend rebuild (2026-10-30): user ordered React
+  ("react will be best", "this is not a demo, I want real results").
+  React 19 + Vite + TS, dark neon default + light theme toggle from
+  his mockups, swirl logo as inline SVG; backend untouched. Live QA
+  matrix found 3 real bug classes (204-body parse, composite-key
+  pagination, camelCase keys) — all fixed with regression tests; see
+  `docs/decisions/0022-react-rebuild-dual-theme.md`.
+- 0023 Notification triggers (2026-10-30): notifications are created
+  by Postgres triggers (migration 07), not the API — five
+  SECURITY DEFINER functions (follow, reply, opinion like, reply
+  like, repost), no service key in the repo, self/blocked suppression,
+  anonymous masking at read time; see
+  `docs/decisions/0023-notification-triggers.md`.
 
 ## What this repo is NOT
 

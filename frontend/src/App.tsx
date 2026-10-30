@@ -375,6 +375,9 @@ export default function App(): ReactNode {
           initials={me ? "YO" : "S"}
           signedIn={me !== null}
           onSignOut={signOut}
+          onProfile={() => {
+            if (me) window.location.hash = `#/profile/${me.id}`;
+          }}
           theme={theme}
           onToggleTheme={toggleTheme}
         />

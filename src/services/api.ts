@@ -20,9 +20,10 @@
  * - It never builds a voter list, never returns another user's
  *   vote/like, never returns email/phone/token/MFA material.
  * - It never creates a notification or daily question for a user:
- *   those are server-only; createNotificationServerOnly() throws
- *   and is not routed (a later layer wires it with a server key
- *   that must never live in this repo's client code).
+ *   notifications are created by Postgres triggers (migration 07,
+ *   decision 0023) — createNotificationServerOnly() throws and is
+ *   not routed, so the API can never mistake itself for the
+ *   creation path.
  * - It never lists profiles or checks "does this handle/email
  *   exist": no enumeration oracle. Handle collisions are handled
  *   by the migration-05 fallback, not by a lookup endpoint.

@@ -150,6 +150,7 @@ export function Topbar({
   initials,
   signedIn,
   onSignOut,
+  onProfile,
   theme,
   onToggleTheme,
 }: {
@@ -158,9 +159,21 @@ export function Topbar({
   initials: string;
   signedIn: boolean;
   onSignOut: () => void;
+  onProfile: () => void;
   theme: "dark" | "light";
   onToggleTheme: () => void;
 }): ReactNode {
+  // The profile chip opens a menu — it must never sign out on a single
+  // tap. (2026-10-30: the old one-tap sign-out made users log themselves
+  // out by tapping what looked like a profile menu.)
+  const [menuOpen, setMenuOpen] = useState(false);
+  const chipClick = (): void => {
+    if (!signedIn) {
+      onSignOut(); // signed-out: routes to #/signin
+      return;
+    }
+    setMenuOpen((open) => !open);
+  };
   return (
     <div className="topbar">
       <label className="search">
@@ -186,8 +199,10 @@ export function Topbar({
       <button
         className="user-chip"
         type="button"
-        onClick={onSignOut}
-        title={signedIn ? "Sign out" : "Sign in"}
+        onClick={chipClick}
+        title={signedIn ? "Account menu" : "Sign in"}
+        aria-haspopup={signedIn ? "menu" : undefined}
+        aria-expanded={signedIn ? menuOpen : undefined}
       >
         <Avatar initials={initials} small />
         <span className="who">
@@ -196,6 +211,39 @@ export function Topbar({
         </span>
         ▾
       </button>
+      {signedIn && menuOpen && (
+        <>
+          <button
+            className="menu-backdrop"
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className="user-menu" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false);
+                onProfile();
+              }}
+            >
+              My profile
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="danger"
+              onClick={() => {
+                setMenuOpen(false);
+                onSignOut();
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

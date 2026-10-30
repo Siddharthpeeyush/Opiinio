@@ -170,6 +170,20 @@ describe("frontend screens and states", () => {
     assert.match(css, /@media \(max-width: 820px\)/);
     assert.doesNotMatch(css, /width: 100vw/);
   });
+
+  it("profile chip opens a menu — never signs out on a single tap", async () => {
+    const components = await readSrc("components.tsx");
+    // The chip toggles a menu; sign-out happens only via the menu item.
+    assert.match(components, /aria-haspopup/);
+    assert.match(components, /role="menu"/);
+    assert.match(components, /My profile/);
+    assert.match(components, /setMenuOpen/);
+    // No direct onClick={onSignOut} on the chip anymore.
+    assert.doesNotMatch(
+      components,
+      /className="user-chip"[\s\S]{0,200}onClick=\{onSignOut\}/,
+    );
+  });
 });
 
 describe("served frontend pages", () => {

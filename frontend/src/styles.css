@@ -344,6 +344,57 @@ button {
   color: var(--muted);
 }
 
+/* Account dropdown menu (opened from the profile chip). The chip must
+ * never sign out on a single tap — sign-out lives behind this menu. */
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: default;
+  z-index: 60;
+}
+
+.user-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 168px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  z-index: 61;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.user-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.user-menu button:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.user-menu button.danger {
+  color: #f43f5e;
+}
+
+/* The topbar is the positioning context for the menu. */
+.topbar {
+  position: relative;
+}
+
 /* ------------------------------------------------------------------ tabs */
 
 .tabs {
